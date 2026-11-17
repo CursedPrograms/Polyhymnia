@@ -2,6 +2,8 @@
 //   Polyhymnia [--script NAME] [--capture shot.bmp]
 #include "app.h"
 #include "lang.h"
+#include "mix.h"
+#include "project.h"
 #include "splash.h"
 
 #include <SDL.h>
@@ -81,12 +83,28 @@ static void splashSay(const char* status, float progress) {
     SDL_GL_SwapWindow(splashWin);
 }
 
+static int runRender(const char* projectPath, const char* outWav) {
+    Session::Document doc;
+    std::string err;
+    if (!Project::load(projectPath, doc, err)) {
+        fprintf(stderr, "render: %s\n", err.c_str());
+        return 1;
+    }
+    if (!Mix::renderToWav(doc, outWav, err)) {
+        fprintf(stderr, "render: %s\n", err.c_str());
+        return 1;
+    }
+    fprintf(stderr, "render: wrote %s (%lld samples)\n", outWav, (long long)Mix::sessionLength(doc));
+    return 0;
+}
+
 int main(int argc, char** argv) {
     std::string capture, scriptName;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--capture" && i + 1 < argc) capture = argv[++i];
         else if (a == "--script" && i + 1 < argc) scriptName = argv[++i];
+        else if (a == "--render" && i + 2 < argc) return runRender(argv[++i], argv[++i]);
     }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) return 1;

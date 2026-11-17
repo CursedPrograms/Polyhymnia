@@ -6,6 +6,7 @@
 #include "miniaudio.h"
 
 #include "audio.h"
+#include "playback.h"
 
 #include <cstring>
 #include <mutex>
@@ -25,8 +26,12 @@ static std::mutex devMtx;
 
 static void callback(ma_device* device, void* output, const void* input, ma_uint32 frames) {
     (void)input;
-    const ma_uint32 bytes = frames * ma_get_bytes_per_frame(device->playback.format, device->playback.channels);
-    std::memset(output, 0, bytes);
+    if (device->playback.channels == 2 && device->playback.format == ma_format_f32)
+        Playback::fillOutput((float*)output, frames, device->sampleRate);
+    else {
+        const ma_uint32 bytes = frames * ma_get_bytes_per_frame(device->playback.format, device->playback.channels);
+        std::memset(output, 0, bytes);
+    }
 }
 
 static void refreshList() {

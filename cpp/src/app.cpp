@@ -2,6 +2,7 @@
 #include "app.h"
 #include "audio.h"
 #include "lang.h"
+#include "playback.h"
 #include "project.h"
 #include "splash.h"
 
@@ -230,7 +231,24 @@ void init(SDL_Window* win, const std::string& prefPath, const std::string& langu
     if (splash) splash(T("Ready"), 1.0f);
 }
 
+static void drawTransport() {
+    if (!hasDoc) return;
+    ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetIO().DisplaySize.y - 48));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, 48));
+    ImGui::Begin("transport", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    if (ImGui::Button(Playback::isPlaying() ? T("Stop") : T("Play"))) {
+        if (Playback::isPlaying()) Playback::stop();
+        else Playback::play();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(T("Loop"))) Playback::toggleLoop();
+    ImGui::SameLine();
+    ImGui::Text("%s %lld  %s %s", T("Playhead"), (long long)Playback::playhead(), T("Loop"), Playback::loopEnabled() ? T("on") : T("off"));
+    ImGui::End();
+}
+
 void frame() {
+    if (hasDoc) Playback::setDocument(&doc);
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu(T("File"))) {
             if (ImGui::MenuItem(T("New"), "Ctrl+N")) newDoc();
@@ -248,14 +266,16 @@ void frame() {
         }
         ImGui::EndMainMenuBar();
     }
+    const float transportH = hasDoc ? 48.0f : 0.0f;
     ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - ImGui::GetFrameHeight()));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - ImGui::GetFrameHeight() - transportH));
     ImGui::Begin("workspace", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     drawLeftPanel();
     drawCenter();
     ImGui::End();
     drawPrefs();
     drawAbout();
+    drawTransport();
 }
 
 void script(const std::string& name) {
@@ -281,6 +301,15 @@ void script(const std::string& name) {
         }
         doc = round;
         fprintf(stderr, "session: %zu tracks, %zu markers, saved and reopened %s\n", doc.tracks.size(), doc.markers.size(), path.c_str());
+        return;
+    }
+    if (name == "playback") {
+        doc = Session::demo();
+        hasDoc = true;
+        Playback::setDocument(&doc);
+        Playback::toggleLoop();
+        Playback::play();
+        fprintf(stderr, "playback: playing demo, loop %s, %zu tracks\n", Playback::loopEnabled() ? "on" : "off", doc.tracks.size());
     }
 }
 

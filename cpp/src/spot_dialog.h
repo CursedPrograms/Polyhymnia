@@ -18,6 +18,8 @@ struct State {
     std::optional<std::string> toTrack;
     std::string trimClip;
     bool trimStart = true;
+    uint64_t sourceNumId = 0;
+    uint64_t sourceTrackNumId = 0;
     long long start = 0;
     long long len = 0;
     long long sync = 0;
@@ -35,6 +37,9 @@ std::optional<State> clips(const Session::Document& s, std::vector<std::string> 
 
 // after spot.rs Spot::trim
 std::optional<State> trim(const Session::Document& s, const std::string& clipId, bool startEdge, long long to);
+
+// after spot.rs Spot::source
+std::optional<State> source(const Session::Document& s, uint64_t sourceNumId, uint64_t trackNumId, long long at);
 
 void open(State s);
 

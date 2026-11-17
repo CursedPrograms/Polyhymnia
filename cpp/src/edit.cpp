@@ -2,6 +2,7 @@
 #include "edit.h"
 #include "app.h"
 #include "clip_ops.h"
+#include "clips_panel.h"
 #include "edit_drag.h"
 #include "editor.h"
 #include "lang.h"
@@ -49,6 +50,9 @@ struct Gesture {
 
 static Gesture gGesture;
 static bool gHadDrag = false;
+static ImVec2 gTimelineMin = ImVec2(0, 0);
+static ImVec2 gTimelineMax = ImVec2(0, 0);
+static float gRulerTopY = 0.0f;
 
 static const Session::Clip* clipAt(const Session::Track& track, long long at) {
     for (const auto& c : track.clips)
@@ -230,16 +234,48 @@ void draw(Session::Document& doc, float transportReserve) {
     }
 
     const ImVec2 p0 = ImGui::GetItemRectMin();
+    gTimelineMin = p0;
+    gTimelineMax = ImVec2(p0.x + avail.x, p0.y + avail.y);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p0, ImVec2(p0.x + kHeaderW, p0.y + contentH), C_BG);
-    dl->AddRectFilled(ImVec2(p0.x + kHeaderW, p0.y), ImVec2(p0.x + avail.x, p0.y + contentH), C_WELL);
+    dl->AddRectFilled(p0, ImVec2(p0.x + kHeaderW, p0.y + std::max(avail.y, contentH)), C_BG);
+    dl->AddRectFilled(ImVec2(p0.x + kHeaderW, p0.y), ImVec2(p0.x + avail.x, p0.y + std::max(avail.y, contentH)), C_WELL);
     drawRulers(dl, ImVec2(p0.x + kHeaderW, p0.y - scrollY), laneW, doc);
     dl->AddText(ImVec2(p0.x + 8, p0.y + 4 - scrollY), C_DIM, T("Tracks"));
     dl->AddText(ImVec2(p0.x + 8, p0.y + 14 - scrollY), C_DIM, T("Bars / beats"));
     dl->AddText(ImVec2(p0.x + 8, p0.y + kRulerH * 0.5f + 10 - scrollY), C_DIM, T("Min:sec"));
 
     const float rulerTop = p0.y + kRulerH - scrollY;
+    gRulerTopY = rulerTop;
     const long long visStart = (long long)scrollX;
+
+    // after SoundCraft (crates/ui-egui/src/edit_window/input.rs lane_menu_and_drops DragSource)
+    if (ImGui::BeginDragDropTarget()) {
+        const ImGuiPayload* hoverPayload = ImGui::AcceptDragDropPayload(ClipsPanel::kDragSourcePayload, ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+        if (hoverPayload && hoverPayload->DataSize == sizeof(uint64_t)) {
+            const float mx = ImGui::GetIO().MousePos.x;
+            const float my = ImGui::GetIO().MousePos.y;
+            const int row = trackRowAt(my, rulerTop, (int)doc.tracks.size());
+            if (row >= 0) {
+                const float ry = rulerTop + (float)row * kTrackH;
+                dl->AddRect(ImVec2(p0.x + kHeaderW, ry), ImVec2(p0.x + avail.x, ry + kTrackH - 2.0f), C_BLUE, 0.0f, 0, 2.0f);
+            } else {
+                const float ry = rulerTop + (float)doc.tracks.size() * kTrackH;
+                dl->AddRect(ImVec2(p0.x + kHeaderW, ry), ImVec2(p0.x + avail.x, ry + kTrackH - 2.0f), C_BLUE, 0.0f, 0, 2.0f);
+            }
+            if (hoverPayload->IsDelivery()) {
+                const uint64_t srcNumId = *static_cast<const uint64_t*>(hoverPayload->Data);
+                const long long rawAt = std::max(0LL, visStart + (long long)((mx - (p0.x + kHeaderW)) * gSamplesPerPixel));
+                const long long at = EditDrag::dragSnap(doc, rawAt, ImGui::GetIO().KeyCtrl);
+                const uint64_t trNumId = (row >= 0 && doc.tracks[(size_t)row].kind == Session::TrackKind::Audio)
+                                             ? doc.tracks[(size_t)row].numId
+                                             : 0;
+                auto spot = Spot::source(doc, srcNumId, trNumId, at);
+                EditDrag::spotOrRun(doc, std::move(spot));
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+
     driveGesture(doc, laneW, p0.x, kHeaderW, p0.y, rulerTop);
     if (hovered && gGesture.kind == GestureKind::None && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         const float mx = ImGui::GetIO().MousePos.x;
@@ -296,11 +332,13 @@ void draw(Session::Document& doc, float transportReserve) {
     for (int ti = 0; ti < (int)doc.tracks.size(); ++ti) {
         const float rowY = p0.y + kRulerH + (float)ti * kTrackH - scrollY;
         const auto& track = doc.tracks[(size_t)ti];
+        const ImU32 trackCol = IM_COL32(track.color[0], track.color[1], track.color[2], 255);
         dl->AddRectFilled(ImVec2(p0.x, rowY), ImVec2(p0.x + kHeaderW, rowY + kTrackH - 2), C_PANEL);
-        dl->AddText(ImVec2(p0.x + 8, rowY + 8), C_TEXT, track.name.c_str());
+        dl->AddRectFilled(ImVec2(p0.x, rowY), ImVec2(p0.x + 5, rowY + kTrackH - 2), trackCol);
+        dl->AddText(ImVec2(p0.x + 10, rowY + 8), C_TEXT, track.name.c_str());
         char flags[32];
         snprintf(flags, sizeof(flags), "%s%s", track.mute ? "M" : "-", track.solo ? "S" : "-");
-        dl->AddText(ImVec2(p0.x + 8, rowY + 28), C_DIM, flags);
+        dl->AddText(ImVec2(p0.x + 10, rowY + 28), C_DIM, flags);
         dl->AddLine(ImVec2(p0.x + kHeaderW, rowY + kTrackH - 1), ImVec2(p0.x + avail.x, rowY + kTrackH - 1), C_LINE);
         const Mix::MixPlan::TrackPlay* tplay = nullptr;
         if (plan && ti < (int)plan->tracks.size()) tplay = &plan->tracks[(size_t)ti];
@@ -318,14 +356,23 @@ void draw(Session::Document& doc, float transportReserve) {
             bool selected = false;
             for (const auto& r : Editor::selection().clips)
                 if (r.trackId == track.id && r.clipId == clip.id) selected = true;
-            const ImU32 fill = selected ? IM_COL32(0x00, 0x7b, 0xb7, 220) : C_CLIP;
+            const auto cc = clip.color.value_or(track.color);
+            const ImU32 baseFill = IM_COL32(cc[0] * 3 / 5, cc[1] * 3 / 5, cc[2] * 3 / 5, 220);
+            const ImU32 fill = selected ? IM_COL32(0x00, 0x7b, 0xb7, 235) : baseFill;
             dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), fill, 2.0f);
+            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, std::min(y1, y0 + 16.0f)), IM_COL32(0, 0, 0, 90), 2.0f);
+            if (x1 - x0 > 24.0f) {
+                const std::string& lbl = clip.name.empty() ? clip.id : clip.name;
+                dl->PushClipRect(ImVec2(x0 + 2, y0), ImVec2(x1 - 2, y0 + 16.0f), true);
+                dl->AddText(ImVec2(x0 + 4, y0 + 1), C_TEXT, lbl.c_str());
+                dl->PopClipRect();
+            }
             if (tplay) {
                 for (const auto& cplay : tplay->clips)
                     if (cplay.clip.id == clip.id && cplay.audio && cplay.audio->frames > 0) {
                         const int pxCols = std::max(1, (int)(x1 - x0 - 4.0f));
                         const Mix::Peaks& pk = Mix::peaksForClipPixels(clip.sourceId, *cplay.audio, clip, pxCols);
-                        drawWaveform(dl, ImVec2(x0 + 2, y0 + 2), ImVec2(x1 - 2, y1 - 2), pk, IM_COL32(0xd6, 0xd6, 0xd6, 200));
+                        drawWaveform(dl, ImVec2(x0 + 2, y0 + 16), ImVec2(x1 - 2, y1 - 2), pk, IM_COL32(0xe8, 0xe8, 0xe8, 220));
                         break;
                     }
             }
@@ -403,6 +450,28 @@ long long sampleAtX(float localX, float headerW) {
     (void)headerW;
     const long long visStart = (long long)scrollX;
     return visStart + (long long)(localX * gSamplesPerPixel);
+}
+
+DropTarget hitTestDrop(const Session::Document& doc, float screenX, float screenY) {
+    DropTarget out;
+    if (screenX < gTimelineMin.x || screenX > gTimelineMax.x || screenY < gTimelineMin.y || screenY > gTimelineMax.y) {
+        return out;
+    }
+    out.inTimeline = true;
+    const long long visStart = (long long)scrollX;
+    if (screenX >= gTimelineMin.x + kHeaderW) {
+        const long long rawAt = std::max(0LL, visStart + (long long)((screenX - (gTimelineMin.x + kHeaderW)) * gSamplesPerPixel));
+        out.sampleAt = EditDrag::dragSnap(doc, rawAt, false);
+    } else {
+        out.sampleAt = Playback::playhead();
+    }
+    const int row = trackRowAt(screenY, gRulerTopY, (int)doc.tracks.size());
+    if (row >= 0 && doc.tracks[(size_t)row].kind == Session::TrackKind::Audio) {
+        out.trackNumId = doc.tracks[(size_t)row].numId;
+    } else {
+        out.trackNumId = 0; // empty space below tracks -> create a new track
+    }
+    return out;
 }
 
 } // namespace Edit

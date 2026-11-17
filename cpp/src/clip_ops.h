@@ -21,6 +21,8 @@ float fadeCurvatureForMidpointGain(const Session::Fade& f, float gain);
 void fadeSanitize(Session::Fade& f);
 const char* fadeShapeLabel(Session::FadeShape shape);
 std::optional<Session::FadeShape> fadeShapeFromId(const std::string& s);
+std::string fadeToJson(const Session::Fade& f);
+std::optional<Session::Fade> fadeFromJson(const std::string& json);
 void trimStartTo(Session::Clip& c, long long newStart);
 void trimEndTo(Session::Clip& c, long long newEnd);
 void clampFades(Session::Clip& c);

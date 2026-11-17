@@ -159,6 +159,60 @@ const char* fadeShapeLabel(Session::FadeShape shape) {
 
 std::optional<Session::FadeShape> fadeShapeFromId(const std::string& s) { return shapeFromId(s); }
 
+// after SoundCraft (crates/model/src/clip.rs Fade serde round-trip)
+std::string fadeToJson(const Session::Fade& f) {
+    const char* shapeStr = "EqualPower";
+    switch (f.shape) {
+    case Session::FadeShape::Linear: shapeStr = "Linear"; break;
+    case Session::FadeShape::EqualPower: shapeStr = "EqualPower"; break;
+    case Session::FadeShape::SCurve: shapeStr = "SCurve"; break;
+    case Session::FadeShape::Exponential: shapeStr = "Exponential"; break;
+    case Session::FadeShape::Logarithmic: shapeStr = "Logarithmic"; break;
+    }
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "{\"len\":%lld,\"shape\":\"%s\",\"curvature\":%.9g}", f.len, shapeStr, f.curvature);
+    return buf;
+}
+
+std::optional<Session::Fade> fadeFromJson(const std::string& json) {
+    Session::Fade f;
+    auto findKey = [&](const char* key) -> size_t {
+        std::string pat = std::string("\"") + key + "\"";
+        size_t pos = json.find(pat);
+        if (pos == std::string::npos) return std::string::npos;
+        pos = json.find(':', pos + pat.size());
+        if (pos == std::string::npos) return std::string::npos;
+        ++pos;
+        while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
+        return pos;
+    };
+    const size_t lenPos = findKey("len");
+    const size_t shapePos = findKey("shape");
+    if (lenPos == std::string::npos || shapePos == std::string::npos) return std::nullopt;
+    try {
+        f.len = std::stoll(json.substr(lenPos));
+    } catch (...) {
+        return std::nullopt;
+    }
+    if (json[shapePos] != '"') return std::nullopt;
+    const size_t shapeEnd = json.find('"', shapePos + 1);
+    if (shapeEnd == std::string::npos) return std::nullopt;
+    auto parsedShape = shapeFromId(json.substr(shapePos + 1, shapeEnd - shapePos - 1));
+    if (!parsedShape) return std::nullopt;
+    f.shape = *parsedShape;
+    const size_t curvPos = findKey("curvature");
+    if (curvPos != std::string::npos) {
+        try {
+            f.curvature = std::stof(json.substr(curvPos));
+        } catch (...) {
+            f.curvature = 0.0f;
+        }
+    } else {
+        f.curvature = 0.0f;
+    }
+    return f;
+}
+
 // after SoundCraft (crates/model/src/clip.rs Clip::clamp_fades)
 void clampFades(Session::Clip& c) {
     c.fadeIn.len = std::clamp(c.fadeIn.len, 0LL, c.length);

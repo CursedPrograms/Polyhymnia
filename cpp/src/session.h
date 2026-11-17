@@ -5,14 +5,68 @@
 #include "time_range.h"
 #include "timecode.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace Session {
+
+// after SoundCraft (crates/model/src/source.rs FileFormat)
+enum class FileFormat { Wav, Aiff, Flac, Mp3, Ogg, Aac, Alac, Caf, Other };
+
+const char* fileFormatName(FileFormat f);
+std::optional<FileFormat> fileFormatFromName(const std::string& name);
+
+// after SoundCraft (crates/model/src/mixer.rs ChannelFormat)
+enum class ChannelFormat {
+    Mono,
+    Stereo,
+    Lcr,
+    Quad,
+    Lcrs,
+    Surround50,
+    Surround51,
+    Surround60,
+    Surround61,
+    Sdds70,
+    Sdds71,
+    Surround70,
+    Surround71,
+    Atmos702,
+    Atmos712,
+    Atmos502,
+    Atmos512,
+    Atmos504,
+    Atmos514,
+    Atmos704,
+    Atmos714,
+    Atmos706,
+    Atmos716,
+    Atmos904,
+    Atmos914,
+    Atmos906,
+    Atmos916,
+    Ambisonics1,
+    Ambisonics2,
+    Ambisonics3,
+    Ambisonics4,
+    Ambisonics5,
+    Ambisonics6,
+    Ambisonics7
+};
+
+size_t channelFormatChannels(ChannelFormat f);
+const char* channelFormatLabel(ChannelFormat f);
+std::optional<ChannelFormat> channelFormatFromId(const std::string& s);
+ChannelFormat channelFormatForChannels(size_t n);
+
+// after SoundCraft (crates/model/src/track.rs TRACK_COLORS)
+extern const std::array<std::array<uint8_t, 3>, 16> kTrackColors;
 
 enum class FadeShape { Linear, EqualPower, SCurve, Exponential, Logarithmic };
 
@@ -31,6 +85,11 @@ inline bool hasPlaylist(TrackKind k) {
 
 // after SoundCraft (crates/model/src/track.rs TrackKind::is_midi)
 inline bool isMidiKind(TrackKind k) { return k == TrackKind::Midi || k == TrackKind::Instrument; }
+
+const char* trackKindDefaultName(TrackKind k);
+const char* trackKindLabel(TrackKind k);
+const char* trackKindId(TrackKind k);
+std::optional<TrackKind> trackKindFromId(const std::string& s);
 
 struct MidiNote {
     uint8_t pitch = 60;
@@ -79,6 +138,7 @@ struct Clip {
     std::optional<uint64_t> loopId;
     std::optional<uint64_t> group;
     std::optional<uint64_t> autoNameScheme;
+    std::optional<std::array<uint8_t, 3>> color;
     long long end() const;
 };
 
@@ -115,6 +175,8 @@ struct Track {
     uint64_t numId = 0;
     std::string name;
     TrackKind kind = TrackKind::Audio;
+    ChannelFormat format = ChannelFormat::Mono;
+    std::array<uint8_t, 3> color = {86, 132, 214};
     bool mute = false;
     bool solo = false;
     float gainDb = 0.0f;
@@ -148,11 +210,70 @@ struct Marker {
 struct Source {
     std::string id;
     uint64_t numId = 0;
+    std::string name;
     std::string path;
     int sampleRate = 48000;
     int channels = 2;
     long long frames = 0;
+    FileFormat format = FileFormat::Wav;
+    uint64_t timeReference = 0;
+    bool unsaved = false;
     std::vector<float> monoPcm;
+};
+
+// after SoundCraft (craft-audio AudioBuffer)
+struct AudioBuffer {
+    uint32_t sampleRate = 48000;
+    std::vector<std::vector<float>> channels;
+
+    size_t frames() const { return channels.empty() ? 0 : channels[0].size(); }
+    uint16_t numChannels() const { return static_cast<uint16_t>(channels.size()); }
+};
+
+// after SoundCraft (crates/model/src/source.rs SourceAudio)
+struct SourceAudio {
+    AudioBuffer buffer;
+    // Per-channel min/max pairs (256 frames per bucket) for fast waveform overview rendering.
+    std::vector<std::vector<float>> peaks;
+
+    SourceAudio() = default;
+    explicit SourceAudio(AudioBuffer buf);
+    size_t frames() const { return buffer.frames(); }
+    const std::vector<float>* channel(size_t ch) const { return ch < buffer.channels.size() ? &buffer.channels[ch] : nullptr; }
+};
+
+// after SoundCraft (crates/model/src/source.rs SourcePool)
+struct SourcePool {
+    std::map<uint64_t, std::shared_ptr<SourceAudio>> map;
+
+    void insert(uint64_t id, std::shared_ptr<SourceAudio> audio) { map[id] = std::move(audio); }
+    std::shared_ptr<SourceAudio> get(uint64_t id) const {
+        auto it = map.find(id);
+        return it != map.end() ? it->second : nullptr;
+    }
+    std::shared_ptr<SourceAudio> remove(uint64_t id) {
+        auto it = map.find(id);
+        if (it == map.end()) return nullptr;
+        auto out = std::move(it->second);
+        map.erase(it);
+        return out;
+    }
+    bool contains(uint64_t id) const { return map.find(id) != map.end(); }
+    size_t len() const { return map.size(); }
+    bool isEmpty() const { return map.empty(); }
+    std::vector<uint64_t> ids() const {
+        std::vector<uint64_t> out;
+        out.reserve(map.size());
+        for (const auto& kv : map) out.push_back(kv.first);
+        return out;
+    }
+    bool operator==(const SourcePool& other) const {
+        if (map.size() != other.map.size()) return false;
+        for (auto it1 = map.begin(), it2 = other.map.begin(); it1 != map.end(); ++it1, ++it2) {
+            if (it1->first != it2->first || it1->second.get() != it2->second.get()) return false;
+        }
+        return true;
+    }
 };
 
 struct SessionEdit {
@@ -160,6 +281,7 @@ struct SessionEdit {
     Time::Range timelineSelection;
     std::vector<uint64_t> selectedTracks;
     std::vector<uint64_t> selectedClips;
+    std::vector<uint64_t> selectedSources;
     std::map<std::string, double> values;
     std::map<std::string, bool> flags;
 };
@@ -207,9 +329,16 @@ struct Document {
     uint64_t nextAlloc = 1;
     SessionEdit sessionEdit;
     std::map<uint64_t, AutoRenameScheme> autoNames;
+    SourcePool pool;
 };
 
 uint64_t allocId(Document& doc);
+std::array<uint8_t, 3> nextTrackColor(const Document& doc);
+std::string uniqueTrackName(const Document& doc, const std::string& base);
+uint64_t addTrack(Document& doc, TrackKind kind, ChannelFormat format, std::optional<std::string> name = std::nullopt);
+Source* findSourceByNum(Document& doc, uint64_t numId);
+const Source* findSourceByNum(const Document& doc, uint64_t numId);
+std::vector<const Clip*> clipsUsing(const Document& doc, uint64_t sourceNumId);
 
 Document empty();
 Document demo();

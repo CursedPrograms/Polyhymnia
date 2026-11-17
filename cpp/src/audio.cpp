@@ -1,4 +1,6 @@
 // Polyhymnia - miniaudio playback device: enumerate outputs and keep a stream open (silence until the mix runs).
+#define STB_VORBIS_HEADER_ONLY
+#include "stb_vorbis.c"
 #define MINIAUDIO_IMPLEMENTATION
 #define MA_NO_ENCODING
 #define MA_NO_GENERATION
@@ -106,3 +108,6 @@ unsigned bufferSize() { return bufFrames; }
 int activeDeviceIndex() { return activeIndex; }
 
 }
+
+#undef STB_VORBIS_HEADER_ONLY
+#include "stb_vorbis.c"

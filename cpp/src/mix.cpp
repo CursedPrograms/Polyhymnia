@@ -105,10 +105,39 @@ static fs::path resolveAudioPath(const Session::Document& doc, const std::string
     return p;
 }
 
-// Load one source off the audio/UI thread; missing files become a short placeholder tone.
+// Load one source off the audio/UI thread; uses in-memory SourcePool when available.
 static std::shared_ptr<const Buffer> loadSource(const Session::Document& doc, const Session::Source& src, std::string& missing) {
     auto out = std::make_shared<Buffer>();
     out->sampleRate = (int)doc.sampleRate;
+    if (src.numId != 0) {
+        if (auto pooled = doc.pool.get(src.numId)) {
+            const size_t nFrames = pooled->frames();
+            const size_t nCh = pooled->buffer.channels.size();
+            if (nFrames > 0 && nCh > 0) {
+                out->frames = static_cast<int>(nFrames);
+                out->stereo.resize(nFrames * 2, 0.0f);
+                for (size_t i = 0; i < nFrames; ++i) {
+                    const float l = pooled->buffer.channels[0][i];
+                    const float r = (nCh >= 2) ? pooled->buffer.channels[1][i] : l;
+                    out->stereo[i * 2] = l;
+                    out->stereo[i * 2 + 1] = r;
+                }
+                out->synthetic = false;
+                return out;
+            }
+        }
+    }
+    if (!src.monoPcm.empty()) {
+        const size_t nFrames = src.monoPcm.size();
+        out->frames = static_cast<int>(nFrames);
+        out->stereo.resize(nFrames * 2, 0.0f);
+        for (size_t i = 0; i < nFrames; ++i) {
+            out->stereo[i * 2] = src.monoPcm[i];
+            out->stereo[i * 2 + 1] = src.monoPcm[i];
+        }
+        out->synthetic = false;
+        return out;
+    }
     const fs::path path = resolveAudioPath(doc, src.path);
     std::error_code ec;
     if (!fs::exists(path, ec)) {

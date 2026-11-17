@@ -3,6 +3,7 @@
 #include "app.h"
 #include "clip_ops.h"
 #include "editor.h"
+#include "engine.h"
 #include "engine_edit.h"
 #include "time_format.h"
 #include "time_range.h"
@@ -51,7 +52,7 @@ bool isOpen() { return gOpen.has_value(); }
 void close() { gOpen.reset(); }
 
 std::optional<State> clips(const Session::Document& s, std::vector<std::string> clipIds, std::optional<std::string> track, long long delta) {
-  const Session::Clip* c = EngEdit::firstMovable(s, clipIds);
+    const Session::Clip* c = EngEdit::firstMovable(s, clipIds);
     if (!c) return std::nullopt;
     State st;
     st.target = TargetKind::Clips;
@@ -62,6 +63,12 @@ std::optional<State> clips(const Session::Document& s, std::vector<std::string> 
     st.start = Time::satAdd(c->start, delta);
     st.len = c->length;
     st.sync = c->syncPoint;
+    if (!c->isMidi) {
+        if (const Session::Source* src = Session::findSource(s, c->sourceId)) {
+            const long long recAt = Time::satSub(static_cast<long long>(src->timeReference & 0x7FFFFFFFFFFFFFFFULL), s.timecodeStart);
+            st.stamp = Time::satAdd(recAt, ClipOps::sourceOffset(*c));
+        }
+    }
     st.format = TimeFormat::Kind::MinSecs;
     st.fresh = true;
     return st;
@@ -83,6 +90,23 @@ std::optional<State> trim(const Session::Document& s, const std::string& clipId,
         st.len = Time::satSub(std::max(to, Time::satAdd(c.start, 1LL)), c.start);
     }
     st.sync = 0;
+    st.format = TimeFormat::Kind::MinSecs;
+    st.fresh = true;
+    return st;
+}
+
+// after SoundCraft (crates/ui-egui/src/dialogs/spot.rs Spot::source)
+std::optional<State> source(const Session::Document& s, uint64_t sourceNumId, uint64_t trackNumId, long long at) {
+    const Session::Source* src = Session::findSourceByNum(s, sourceNumId);
+    if (!src) return std::nullopt;
+    State st;
+    st.target = TargetKind::Source;
+    st.sourceNumId = sourceNumId;
+    st.sourceTrackNumId = trackNumId;
+    st.start = at;
+    st.len = std::max(0LL, src->frames);
+    st.sync = 0;
+    st.stamp = Time::satSub(static_cast<long long>(src->timeReference & 0x7FFFFFFFFFFFFFFFULL), s.timecodeStart);
     st.format = TimeFormat::Kind::MinSecs;
     st.fresh = true;
     return st;
@@ -121,6 +145,18 @@ bool apply(const State& st, Session::Document& doc) {
         if (!EngEdit::trimClip(doc, st.trimClip, std::nullopt, end, Editor::mode() == Editor::Mode::Shuffle)) return false;
         ++doc.touch;
         return true;
+    }
+    if (st.target == TargetKind::Source) {
+        EngCmd::Engine e;
+        e.doc = std::move(doc);
+        EngCmd::Engine::Params p;
+        p.nums["source"] = static_cast<double>(st.sourceNumId);
+        if (st.sourceTrackNumId != 0) p.nums["track"] = static_cast<double>(st.sourceTrackNumId);
+        p.nums["at"] = static_cast<double>(st.start);
+        const auto r = e.execute("clip.place_source", p);
+        doc = std::move(e.doc);
+        if (r.ok) ++doc.touch;
+        return r.ok;
     }
     return false;
 }
@@ -163,6 +199,19 @@ bool draw(Session::Document& doc) {
     ImGui::Text("Duration");
     ImGui::SameLine(120);
     ImGui::TextUnformatted(TimeFormat::formatLength(d.start, d.len, d.format, doc).c_str());
+    if (d.stamp.has_value()) {
+        ImGui::Text("Original Time Stamp");
+        ImGui::SameLine(150);
+        ImGui::TextUnformatted(TimeFormat::formatPosition(*d.stamp, TimeFormat::Kind::Timecode, doc).c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Use")) {
+            d.start = *d.stamp;
+            d.fresh = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Spot to where it was recorded");
+        }
+    }
     bool close = false;
     if (ImGui::Button("OK")) {
         close = true;

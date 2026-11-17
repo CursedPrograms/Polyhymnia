@@ -1,5 +1,6 @@
 // Polyhymnia - line-oriented session file I/O (after SoundCraft session save; JSON-like keys).
 #include "project.h"
+#include "import_audio.h"
 #include "mix.h"
 
 #include <fstream>
@@ -61,18 +62,42 @@ bool save(const Session::Document& doc, const std::string& path, std::string& er
         f << "marker." << m.id << ".at=" << m.start << "\n";
     }
     for (const auto& s : doc.sources) {
-        f << "source." << s.id << ".path=" << relPath(folder, s.path) << "\n";
+        std::string savedPath = relPath(folder, s.path);
+        if (s.unsaved && s.numId != 0 && !folder.empty()) {
+            if (auto audio = doc.pool.get(s.numId)) {
+                std::error_code ec;
+                const fs::path relTarget = fs::u8path(savedPath).is_relative() ? (folder / fs::u8path(savedPath))
+                                                                                : (folder / "Audio Files" / (s.name.empty() ? (s.id + ".wav") : (s.name + ".wav")));
+                fs::create_directories(relTarget.parent_path(), ec);
+                const auto wavBytes = ImportAudio::encodeWav(audio->buffer, 32);
+                std::ofstream wf(relTarget, std::ios::binary);
+                if (wf) {
+                    wf.write(reinterpret_cast<const char*>(wavBytes.data()), static_cast<std::streamsize>(wavBytes.size()));
+                    savedPath = relPath(folder, relTarget.u8string());
+                }
+            }
+        }
+        f << "source." << s.id << ".num_id=" << s.numId << "\n";
+        f << "source." << s.id << ".name=" << s.name << "\n";
+        f << "source." << s.id << ".path=" << savedPath << "\n";
         f << "source." << s.id << ".rate=" << s.sampleRate << "\n";
         f << "source." << s.id << ".channels=" << s.channels << "\n";
+        f << "source." << s.id << ".frames=" << s.frames << "\n";
+        f << "source." << s.id << ".format=" << Session::fileFormatName(s.format) << "\n";
     }
     for (const auto& t : doc.tracks) {
+        f << "track." << t.id << ".num_id=" << t.numId << "\n";
         f << "track." << t.id << ".name=" << t.name << "\n";
+        f << "track." << t.id << ".kind=" << Session::trackKindId(t.kind) << "\n";
+        f << "track." << t.id << ".format=" << Session::channelFormatLabel(t.format) << "\n";
         f << "track." << t.id << ".mute=" << (t.mute ? 1 : 0) << "\n";
         f << "track." << t.id << ".solo=" << (t.solo ? 1 : 0) << "\n";
         f << "track." << t.id << ".gain_db=" << t.gainDb << "\n";
         f << "track." << t.id << ".pan=" << t.pan << "\n";
         for (const auto& c : t.clips) {
             const std::string p = "clip." + t.id + "." + c.id;
+            f << p << ".num_id=" << c.numId << "\n";
+            f << p << ".name=" << c.name << "\n";
             f << p << ".source=" << c.sourceId << "\n";
             f << p << ".start=" << c.start << "\n";
             f << p << ".offset=" << c.offset << "\n";
@@ -145,14 +170,26 @@ bool load(const std::string& path, Session::Document& doc, std::string& err) {
             if (!s) {
                 Session::Source ns;
                 ns.id = id;
+                ns.numId = doc.nextSourceId++;
                 ns.sampleRate = 48000;
                 ns.channels = 2;
                 doc.sources.push_back(ns);
                 s = &doc.sources.back();
             }
-            if (field == "path") s->path = val;
+            if (field == "num_id") {
+                long long v = 0;
+                if (parseLong(val, v) && v > 0) {
+                    s->numId = static_cast<uint64_t>(v);
+                    doc.nextSourceId = std::max(doc.nextSourceId, s->numId + 1);
+                }
+            } else if (field == "name") s->name = val;
+            else if (field == "path") s->path = val;
             else if (field == "rate") s->sampleRate = std::stoi(val);
             else if (field == "channels") s->channels = std::stoi(val);
+            else if (field == "frames") parseLong(val, s->frames);
+            else if (field == "format") {
+                if (auto fmt = Session::fileFormatFromName(val)) s->format = *fmt;
+            }
         } else if (key.rfind("track.", 0) == 0) {
             const size_t dot = key.find('.', 6);
             if (dot == std::string::npos) continue;
@@ -162,12 +199,24 @@ bool load(const std::string& path, Session::Document& doc, std::string& err) {
             if (!curTrack) {
                 Session::Track tr;
                 tr.id = id;
+                tr.numId = doc.nextTrackId++;
                 tr.name = id;
+                tr.color = Session::nextTrackColor(doc);
                 doc.tracks.push_back(std::move(tr));
                 curTrack = &doc.tracks.back();
             }
-            if (field == "name") curTrack->name = val;
-            else if (field == "mute") curTrack->mute = val != "0";
+            if (field == "num_id") {
+                long long v = 0;
+                if (parseLong(val, v) && v > 0) {
+                    curTrack->numId = static_cast<uint64_t>(v);
+                    doc.nextTrackId = std::max(doc.nextTrackId, curTrack->numId + 1);
+                }
+            } else if (field == "name") curTrack->name = val;
+            else if (field == "kind") {
+                if (auto k = Session::trackKindFromId(val)) curTrack->kind = *k;
+            } else if (field == "format") {
+                if (auto fmt = Session::channelFormatFromId(val)) curTrack->format = *fmt;
+            } else if (field == "mute") curTrack->mute = val != "0";
             else if (field == "solo") curTrack->solo = val != "0";
             else if (field == "gain_db") curTrack->gainDb = (float)std::stod(val);
             else if (field == "pan") curTrack->pan = (float)std::stod(val);
@@ -184,9 +233,17 @@ bool load(const std::string& path, Session::Document& doc, std::string& err) {
                 if (inClip) curTrack->clips.push_back(curClip);
                 curClip = Session::Clip{};
                 curClip.id = cid;
+                curClip.numId = Session::newClipNumId(doc);
                 inClip = true;
             }
-            if (field == "source") curClip.sourceId = val;
+            if (field == "num_id") {
+                long long v = 0;
+                if (parseLong(val, v) && v > 0) {
+                    curClip.numId = static_cast<uint64_t>(v);
+                    doc.nextClipId = std::max(doc.nextClipId, curClip.numId + 1);
+                }
+            } else if (field == "name") curClip.name = val;
+            else if (field == "source") curClip.sourceId = val;
             else if (field == "start") parseLong(val, curClip.start);
             else if (field == "offset") parseLong(val, curClip.offset);
             else if (field == "length") parseLong(val, curClip.length);

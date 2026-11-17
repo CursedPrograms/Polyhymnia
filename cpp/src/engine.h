@@ -4,11 +4,17 @@
 #include "session.h"
 #include "time_range.h"
 
+#include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace ImportAudio {
+struct DecodedImport;
+}
 
 namespace EngCmd {
 
@@ -48,6 +54,7 @@ public:
         std::map<std::string, bool> bools;
         std::map<std::string, std::vector<uint64_t>> idLists;
         std::map<std::string, std::vector<double>> numLists;
+        std::map<std::string, std::vector<std::string>> strLists;
         std::map<std::string, std::map<std::string, double>> objects;
 
         bool has(const char* k) const;
@@ -80,6 +87,11 @@ public:
     bool commandEnabled(const char* cmd) const;
     Result execute(const char* cmd, const Params& p = {});
 
+    // after SoundCraft (crates/engine/src/lib.rs offer_import, take_import, drop_offered_imports)
+    void offerImport(ImportAudio::DecodedImport d);
+    std::optional<ImportAudio::DecodedImport> takeImport(const std::filesystem::path& path);
+    void dropOfferedImports();
+
     Session::Document roundTripSession() const;
 
 private:
@@ -89,6 +101,7 @@ private:
     std::vector<std::string> redoLabels_;
     std::optional<LastSelection> lastSelection_;
     std::string lastUndoLabel_;
+    std::vector<std::shared_ptr<ImportAudio::DecodedImport>> imports_;
 
     void pushUndo(const Session::Document& snapshot, const char* label);
     void rememberSelection(const Session::Document& before);

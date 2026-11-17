@@ -3,6 +3,7 @@
 #include "clip_ops.h"
 #include "consolidate.h"
 #include "engine_edit.h"
+#include "import_audio.h"
 #include "project.h"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <numeric>
+#include <set>
 #include <sstream>
 
 namespace EngCmd {
@@ -87,10 +89,15 @@ Session::Source* addRenderedSource(Session::Document& d, const std::string& name
     Session::Source src;
     src.numId = d.nextSourceId++;
     src.id = "src_" + std::to_string(src.numId);
+    src.name = name;
     src.path = name;
     src.sampleRate = sr;
     src.channels = 1;
     src.frames = static_cast<long long>(pcm.size());
+    Session::AudioBuffer buf;
+    buf.sampleRate = static_cast<uint32_t>(sr);
+    buf.channels = {pcm};
+    d.pool.insert(src.numId, std::make_shared<Session::SourceAudio>(std::move(buf)));
     src.monoPcm = std::move(pcm);
     d.sources.push_back(std::move(src));
     return &d.sources.back();
@@ -258,7 +265,7 @@ Result Result::num(const std::string& k, double v) {
 }
 
 bool Engine::Params::has(const char* k) const {
-    return nums.count(k) || strs.count(k) || bools.count(k) || idLists.count(k);
+    return nums.count(k) || strs.count(k) || bools.count(k) || idLists.count(k) || numLists.count(k) || strLists.count(k);
 }
 
 std::optional<double> Engine::Params::num(const char* k) const {
@@ -354,6 +361,36 @@ std::optional<std::string> Engine::undoLabel() const {
     return undoLabels_.back();
 }
 
+// after SoundCraft (crates/engine/src/lib.rs MAX_OFFERED_IMPORTS, offer_import, drop_offered_imports, take_import)
+constexpr size_t kMaxOfferedImports = 4;
+
+void Engine::offerImport(ImportAudio::DecodedImport d) {
+    imports_.erase(std::remove_if(imports_.begin(), imports_.end(),
+                                  [&](const std::shared_ptr<ImportAudio::DecodedImport>& x) { return x && x->key == d.key; }),
+                   imports_.end());
+    imports_.push_back(std::make_shared<ImportAudio::DecodedImport>(std::move(d)));
+    if (imports_.size() > kMaxOfferedImports) {
+        imports_.erase(imports_.begin(), imports_.begin() + static_cast<std::ptrdiff_t>(imports_.size() - kMaxOfferedImports));
+    }
+}
+
+void Engine::dropOfferedImports() {
+    imports_.clear();
+}
+
+std::optional<ImportAudio::DecodedImport> Engine::takeImport(const std::filesystem::path& path) {
+    const auto key = ImportAudio::fileKey(path);
+    const uint32_t rate = static_cast<uint32_t>(std::max(1.0, doc.sampleRate));
+    for (auto it = imports_.begin(); it != imports_.end(); ++it) {
+        if (*it && (*it)->key == key && (*it)->rate == rate) {
+            ImportAudio::DecodedImport out = std::move(**it);
+            imports_.erase(it);
+            return out;
+        }
+    }
+    return std::nullopt;
+}
+
 bool Engine::commandEnabled(const char* cmd) const {
     if (std::strcmp(cmd, "clip.remove_sync_point") != 0) return true;
   for (uint64_t id : doc.sessionEdit.selectedClips) {
@@ -411,6 +448,18 @@ std::vector<std::vector<float>> renderClips(const Session::Document& doc, uint64
 }
 
 Result Engine::execute(const char* cmd, const Engine::Params& p) {
+    if (std::strcmp(cmd, "edit.undo") == 0) {
+        if (!undo()) return Result::err("nothing to undo");
+        Result r;
+        r.ok = true;
+        return r;
+    }
+    if (std::strcmp(cmd, "edit.redo") == 0) {
+        if (!redo()) return Result::err("nothing to redo");
+        Result r;
+        r.ok = true;
+        return r;
+    }
     const Session::Document before = doc;
     const size_t undoBefore = undoStack_.size();
     Result r = dispatch(cmd, p);
@@ -423,8 +472,15 @@ Result Engine::execute(const char* cmd, const Engine::Params& p) {
         return r;
     }
     rememberSelection(before);
-    const bool noundo = std::strcmp(cmd, "edit.restore_last_selection") == 0 || std::strcmp(cmd, "edit.copy") == 0;
-    if (!noundo && !Session::documentsEqual(doc, before)) pushUndo(before, cmd);
+    const bool changed = !Session::documentsEqual(doc, before);
+    if (changed) {
+        ++revision;
+        ++touch;
+    }
+    const bool noundo = std::strcmp(cmd, "edit.restore_last_selection") == 0 || std::strcmp(cmd, "edit.copy") == 0 ||
+                        std::strcmp(cmd, "edit.select") == 0 || std::strcmp(cmd, "edit.select_none") == 0;
+    const char* label = std::strcmp(cmd, "clip.clear") == 0 ? "Clear Clips" : cmd;
+    if (!noundo && changed) pushUndo(before, label);
     return r;
 }
 
@@ -433,24 +489,198 @@ Result Engine::dispatch(const char* cmd, const Engine::Params& p) {
 
     if (std::strcmp(cmd, "track.new") == 0) {
         const int count = static_cast<int>(p.numOr("count", 1));
+        Session::TrackKind kind = Session::TrackKind::Audio;
+        if (auto k = p.str("kind")) {
+            if (auto parsed = Session::trackKindFromId(*k)) kind = *parsed;
+        }
+        Session::ChannelFormat fmt = Session::ChannelFormat::Mono;
+        if (auto f = p.str("format")) {
+            if (auto parsed = Session::channelFormatFromId(*f)) fmt = *parsed;
+        }
+        std::optional<std::string> baseName = p.str("name");
         std::vector<double> ids;
-        for (int i = 0; i < count; ++i) ids.push_back(static_cast<double>(Session::addAudioTrackNum(doc)));
+        for (int i = 0; i < count; ++i) {
+            const uint64_t id = Session::addTrack(doc, kind, fmt, baseName);
+            ids.push_back(static_cast<double>(id));
+        }
         Result r;
         r.ok = true;
         r.arr = std::move(ids);
         return r;
     }
 
+    // after SoundCraft (crates/engine/src/cmd/file.rs import_audio, import_audio_target)
+    if (std::strcmp(cmd, "file.import_audio") == 0) {
+        std::vector<std::string> paths;
+        if (auto it = p.strLists.find("paths"); it != p.strLists.end()) {
+            paths = it->second;
+        }
+        if (auto one = p.str("path")) {
+            paths.push_back(*one);
+        }
+        if (paths.empty()) {
+            return bad("file.import_audio: `path` or `paths` required");
+        }
+        const long long at = std::max(0LL, positionParam(p, "at").value_or(0LL));
+        const bool clipsListOnly = p.boolean("clips_list_only").value_or(false);
+        const bool copyToFolder = p.boolean("copy_to_audio_files").value_or(false);
+
+        std::optional<uint64_t> target;
+        if (!clipsListOnly) {
+            if (p.has("track")) {
+                const auto trs = trackNums(*this, p);
+                if (trs.empty()) return bad("file.import_audio: unknown track");
+                target = trs[0];
+            } else if (!p.boolean("new_tracks").value_or(true)) {
+                for (uint64_t tid : doc.sessionEdit.selectedTracks) {
+                    const Session::Track* t = Session::findTrackByNum(doc, tid);
+                    if (t && t->kind == Session::TrackKind::Audio) {
+                        target = t->numId;
+                        break;
+                    }
+                }
+                if (!target) {
+                    return bad("file.import_audio: `new_tracks: false` needs `track` or a selected audio track");
+                }
+            }
+        }
+
+        Result out;
+        out.ok = true;
+        for (const std::string& rawPath : paths) {
+            const std::filesystem::path fp = std::filesystem::u8path(rawPath);
+            std::string name = fp.filename().u8string();
+            if (name.empty()) name = "Audio";
+            const std::string storedPath = copyToFolder ? ImportAudio::copyToProjectAudioFiles(doc, rawPath) : rawPath;
+            Result r;
+            if (auto offered = takeImport(fp)) {
+                r = ImportAudio::placeDecoded(doc, name, *offered, storedPath, target, at, clipsListOnly);
+            } else {
+                std::error_code ec;
+                if (!std::filesystem::is_regular_file(fp, ec)) {
+                    return Result::err(rawPath + ": file not found");
+                }
+                std::ifstream f(fp, std::ios::binary | std::ios::ate);
+                if (!f) return Result::err(rawPath + ": could not open file");
+                const auto sz = f.tellg();
+                if (sz <= 0) return Result::err(rawPath + ": empty file");
+                std::vector<uint8_t> bytes(static_cast<size_t>(sz));
+                f.seekg(0, std::ios::beg);
+                if (!f.read(reinterpret_cast<char*>(bytes.data()), sz)) {
+                    return Result::err(rawPath + ": read failed");
+                }
+                r = ImportAudio::importAudioBytes(doc, name, bytes.data(), bytes.size(), storedPath, target, at, clipsListOnly);
+            }
+            if (!r.ok) return r;
+            out.nums = r.nums;
+            out.arr.push_back(r.nums["frames"]);
+        }
+        return out;
+    }
+
+    // after SoundCraft (crates/engine/src/cmd/clip.rs clip.place_source)
+    if (std::strcmp(cmd, "clip.place_source") == 0) {
+        const auto srcNumOpt = p.u64("source");
+        if (!srcNumOpt) return bad("clip.place_source: `source` id required");
+        const uint64_t srcNum = *srcNumOpt;
+        const long long atRaw = std::max(0LL, positionParam(p, "at").value_or(doc.sessionEdit.selection.start));
+        std::optional<uint64_t> trackNum;
+        if (p.has("track")) {
+            const auto trs = trackNums(*this, p);
+            if (trs.empty()) return bad("clip.place_source: unknown track");
+            trackNum = trs[0];
+        }
+        const Session::Source* src = Session::findSourceByNum(doc, srcNum);
+        if (!src) return bad("clip.place_source: no such audio file");
+        const std::string name = src->name.empty() ? src->path : src->name;
+        const long long frames = src->frames;
+        const size_t chans = static_cast<size_t>(std::max(1, src->channels));
+        const std::string srcId = src->id;
+
+        uint64_t tNum = 0;
+        if (trackNum) {
+            const Session::Track* tr = Session::findTrackByNum(doc, *trackNum);
+            if (!tr || tr->kind != Session::TrackKind::Audio) {
+                return bad("clip.place_source: audio files go on audio tracks");
+            }
+            tNum = *trackNum;
+        } else {
+            tNum = Session::addTrack(doc, Session::TrackKind::Audio, Session::channelFormatForChannels(std::min<size_t>(chans, 2)), name);
+        }
+        Session::Track* tr = Session::findTrackByNum(doc, tNum);
+        if (!tr) return bad("clip.place_source: target track not found");
+        const long long len = std::max(1LL, frames);
+        const bool sh = doc.sessionEdit.flags.count("mode.shuffle") && doc.sessionEdit.flags.at("mode.shuffle");
+        const long long at = sh ? EngEdit::shuffleSlot(doc, tr->id, atRaw, {}) : atRaw;
+        if (sh) {
+            if (const char* why = EngEdit::makeRoom(doc, tr->id, at, len)) return Result::err(why);
+        }
+        Session::Clip clip;
+        clip.numId = Session::newClipNumId(doc);
+        clip.id = "clip_" + std::to_string(clip.numId);
+        clip.name = name;
+        clip.sourceId = srcId;
+        clip.offset = 0;
+        clip.start = at;
+        clip.length = len;
+        EngEdit::placeClip(doc, tr->id, clip);
+        Result r;
+        r.ok = true;
+        r.nums["clip"] = static_cast<double>(clip.numId);
+        r.nums["track"] = static_cast<double>(tNum);
+        return r;
+    }
+
     if (std::strcmp(cmd, "edit.select") == 0) {
+        const bool hasTracks = p.has("tracks") || p.has("track");
         const auto tracks = trackNums(*this, p);
-        if (p.has("start") || p.has("end")) doc.sessionEdit.selection = rangeParam(*this, p);
-        if (const auto* clips = p.ids("clips")) doc.sessionEdit.selectedClips = *clips;
-        if (!tracks.empty()) doc.sessionEdit.selectedTracks = tracks;
-        return Result::num("tracks", static_cast<double>(tracks.size()));
+        const bool hasStart = p.has("start");
+        const bool hasEnd = p.has("end");
+        const auto* clips = p.ids("clips");
+        const auto* sources = p.ids("sources");
+        const bool listChanges = (clips != nullptr) || (sources != nullptr) || hasStart;
+        if (hasTracks && !tracks.empty()) doc.sessionEdit.selectedTracks = tracks;
+        if (hasStart && hasEnd) {
+            doc.sessionEdit.selection = rangeParam(*this, p);
+        } else if (hasStart) {
+            const long long st = std::max(0LL, p.i64("start").value_or(0LL));
+            doc.sessionEdit.selection = Time::Range::point(st);
+        }
+        if (clips) {
+            std::set<uint64_t> knownClips;
+            for (const auto& t : doc.tracks) {
+                for (const auto& c : t.clips) knownClips.insert(c.numId);
+            }
+            doc.sessionEdit.selectedClips.clear();
+            for (uint64_t id : *clips) {
+                if (knownClips.erase(id) > 0) doc.sessionEdit.selectedClips.push_back(id);
+            }
+        } else if (listChanges) {
+            doc.sessionEdit.selectedClips.clear();
+        }
+        if (listChanges) {
+            std::set<uint64_t> knownSources;
+            for (const auto& f : doc.sources) knownSources.insert(f.numId);
+            doc.sessionEdit.selectedSources.clear();
+            if (sources) {
+                for (uint64_t id : *sources) {
+                    if (knownSources.erase(id) > 0) doc.sessionEdit.selectedSources.push_back(id);
+                }
+            }
+        }
+        Result r;
+        r.ok = true;
+        r.nums["tracks"] = static_cast<double>(doc.sessionEdit.selectedTracks.size());
+        r.nums["clips"] = static_cast<double>(doc.sessionEdit.selectedClips.size());
+        r.nums["sources"] = static_cast<double>(doc.sessionEdit.selectedSources.size());
+        return r;
     }
 
     if (std::strcmp(cmd, "edit.select_none") == 0) {
+        doc.sessionEdit.selectedTracks.clear();
         doc.sessionEdit.selectedClips.clear();
+        doc.sessionEdit.selectedSources.clear();
+        doc.sessionEdit.selection.end = doc.sessionEdit.selection.start;
         return Result::num("clips", 0);
     }
 
@@ -854,6 +1084,30 @@ Result Engine::dispatch(const char* cmd, const Engine::Params& p) {
         return Result::num("tracks", static_cast<double>(trackNums(*this, p).size()));
     }
 
+    if (std::strcmp(cmd, "track.playlist_new") == 0 || std::strcmp(cmd, "track.playlist_duplicate") == 0) {
+        const bool dup = std::strcmp(cmd, "track.playlist_duplicate") == 0;
+        const auto trs = trackNums(*this, p);
+        if (trs.empty()) return bad("track.playlist_new: no tracks selected");
+        for (uint64_t tn : trs) {
+            Session::Track* tr = Session::findTrackByNum(doc, tn);
+            if (!tr) continue;
+            std::vector<Session::Clip> clips;
+            if (dup) clips = tr->activeClips();
+            for (auto& c : clips) {
+                c.numId = Session::newClipNumId(doc);
+                c.id = "clip_" + std::to_string(c.numId);
+            }
+            Session::Playlist pl;
+            char nameBuf[128];
+            std::snprintf(nameBuf, sizeof(nameBuf), "%s.%02zu", tr->name.c_str(), tr->playlists.size() + 1);
+            pl.name = p.str("name").value_or(nameBuf);
+            pl.clips = std::move(clips);
+            tr->playlists.push_back(std::move(pl));
+            tr->activePlaylist = tr->playlists.size();
+        }
+        return Result::num("tracks", static_cast<double>(trs.size()));
+    }
+
     if (std::strcmp(cmd, "track.playlist_select") == 0) {
         const size_t idx = static_cast<size_t>(p.numOr("index", 0));
         for (auto& t : doc.tracks) t.activePlaylist = idx;
@@ -1105,16 +1359,99 @@ Result Engine::dispatch(const char* cmd, const Engine::Params& p) {
         return Result::num("restored", restored);
     }
 
+    // after SoundCraft (crates/engine/src/cmd/clip_list.rs clear)
     if (std::strcmp(cmd, "clip.clear") == 0) {
-        if (const auto* srcs = p.ids("sources")) {
-            for (uint64_t sn : *srcs)
-                doc.sources.erase(std::remove_if(doc.sources.begin(), doc.sources.end(),
-                                                 [&](const Session::Source& s) {
-                                                     return s.numId == sn || s.id == "src_" + std::to_string(sn);
-                                                 }),
-                                 doc.sources.end());
+        if ((p.strs.count("clips") || p.nums.count("clips") || p.bools.count("clips")) ||
+            (p.strs.count("sources") || p.nums.count("sources") || p.bools.count("sources"))) {
+            return bad("clip.clear: `clips` and `sources` must be arrays of ids");
         }
-        return Result::num("cleared", 1);
+        const auto* clipsParam = p.ids("clips");
+        const auto* sourcesParam = p.ids("sources");
+        std::set<uint64_t> clips;
+        std::set<uint64_t> sources;
+        if (!clipsParam && !sourcesParam) {
+            clips.insert(doc.sessionEdit.selectedClips.begin(), doc.sessionEdit.selectedClips.end());
+            sources.insert(doc.sessionEdit.selectedSources.begin(), doc.sessionEdit.selectedSources.end());
+        } else {
+            if (clipsParam) clips.insert(clipsParam->begin(), clipsParam->end());
+            if (sourcesParam) sources.insert(sourcesParam->begin(), sourcesParam->end());
+        }
+
+        std::set<uint64_t> knownClips;
+        for (const auto& t : doc.tracks) {
+            for (const auto& c : t.clips) knownClips.insert(c.numId);
+            for (const auto& pl : t.playlists) {
+                for (const auto& c : pl.clips) knownClips.insert(c.numId);
+            }
+        }
+        for (uint64_t cid : clips) {
+            if (!knownClips.count(cid)) {
+                return Result::err("clip.clear: no clip with id " + std::to_string(cid));
+            }
+        }
+        std::vector<const Session::Source*> files;
+        for (uint64_t fid : sources) {
+            const Session::Source* f = Session::findSourceByNum(doc, fid);
+            if (!f) {
+                return Result::err("clip.clear: no audio file with id " + std::to_string(fid));
+            }
+            files.push_back(f);
+        }
+        if (clips.empty() && files.empty()) {
+            return bad("clip.clear: nothing to clear: pass `clips` or `sources`, or select them in the Clip List");
+        }
+        const bool withClips = p.boolean("with_clips").value_or(false);
+        if (!withClips) {
+            for (const Session::Source* f : files) {
+                const auto usingClips = Session::clipsUsing(doc, f->numId);
+                size_t n = 0;
+                for (const Session::Clip* c : usingClips) {
+                    if (!clips.count(c->numId)) ++n;
+                }
+                if (n > 0) {
+                    const std::string plural = (n == 1) ? "" : "s";
+                    const std::string fname = f->name.empty() ? f->path : f->name;
+                    return Result::err("clip.clear: `" + fname + "` is used by " + std::to_string(n) + " clip" +
+                                       plural + " on the timeline; pass `with_clips: true` to remove them too");
+                }
+            }
+        }
+        std::set<uint64_t> gone = clips;
+        for (uint64_t fid : sources) {
+            for (const Session::Clip* c : Session::clipsUsing(doc, fid)) {
+                gone.insert(c->numId);
+            }
+        }
+        for (auto& t : doc.tracks) {
+            t.clips.erase(std::remove_if(t.clips.begin(), t.clips.end(),
+                                         [&](const Session::Clip& c) { return gone.count(c.numId) > 0; }),
+                          t.clips.end());
+            for (auto& pl : t.playlists) {
+                pl.clips.erase(std::remove_if(pl.clips.begin(), pl.clips.end(),
+                                              [&](const Session::Clip& c) { return gone.count(c.numId) > 0; }),
+                               pl.clips.end());
+            }
+        }
+        doc.sources.erase(std::remove_if(doc.sources.begin(), doc.sources.end(),
+                                         [&](const Session::Source& f) { return sources.count(f.numId) > 0; }),
+                          doc.sources.end());
+        for (uint64_t fid : sources) {
+            doc.pool.remove(fid);
+        }
+        doc.sessionEdit.selectedClips.erase(
+            std::remove_if(doc.sessionEdit.selectedClips.begin(), doc.sessionEdit.selectedClips.end(),
+                           [&](uint64_t id) { return gone.count(id) > 0; }),
+            doc.sessionEdit.selectedClips.end());
+        doc.sessionEdit.selectedSources.erase(
+            std::remove_if(doc.sessionEdit.selectedSources.begin(), doc.sessionEdit.selectedSources.end(),
+                           [&](uint64_t id) { return sources.count(id) > 0; }),
+            doc.sessionEdit.selectedSources.end());
+        Result r;
+        r.ok = true;
+        r.nums["clips"] = static_cast<double>(gone.size());
+        r.nums["sources"] = static_cast<double>(sources.size());
+        r.nums["cleared"] = static_cast<double>(gone.size() + sources.size());
+        return r;
     }
 
     if (std::strcmp(cmd, "clip.identify_sync_point") == 0) {

@@ -3,6 +3,21 @@
 ## Open
 
 
+00. **NEW ORDER FROM THE USER: make Polyhymnia usable first.** The user tried it: there is no way to get audio in.
+   No File > Import Audio, no import button, and dropping a file on a track does nothing (no SDL_DROPFILE handling at
+   all, though phase 4 required it). Do these in order, each ported properly from SoundCraft with its tests, committed
+   and pushed as soon as it works; fix the foundation pieces each one needs as you go instead of finishing the audit first:
+   1. **Importing audio**: File > Import Audio (Ctrl+Shift+I) with a file dialog (WAV, FLAC, MP3, AIFF, OGG; several at
+      once; new track or the selected one; at the cursor or session start; copy into the project's Audio Files folder),
+      drag and drop from Explorer onto a track (lands where dropped), onto empty space (new track), and onto the Clips list;
+      the Clips list on the right shows them (`crates/ui-egui/src/import.rs`, `panels/clips.rs`, `crates/engine` import
+      commands). Test: a script hook that imports and drops files; check the screenshot.
+   2. **The Edit window layout and SoundCraft's exact icons** (item 0b below).
+   3. **The Mix window** (phase 6): faders, pan, mute, solo, meters, sends, busses, the master, built-in effects.
+   4. **Recording** (phase 7), then **Bounce / Export** to WAV, FLAC, MP3 (phase 10).
+   5. **VST3 hosting and the Octavia plugins** (AGENTS.md).
+   Then carry on with the audit's remaining items.
+
 0b. **The UI layout is wrong: port SoundCraft's layout, not an invented one.** Look at `D:\cc\_src\soundcraft\docs\images\edit.png`
    (also `mix.png`, `midi.png`, `automation.png`) beside your own screenshot. Ours has a session-info panel on the left,
    bare lanes, Play/Loop at the bottom and only File/Help menus. Port the Edit window from `crates/ui-egui/src/toolbar.rs`,

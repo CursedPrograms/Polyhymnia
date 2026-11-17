@@ -16,6 +16,7 @@ void registerCmdEditTests();
 void registerCmdEditMoreTests();
 void registerCmdClipTests();
 void registerCmdClipMoreTests();
+void registerImportAudioTests();
 
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -180,6 +181,7 @@ int main(int argc, char** argv) {
         registerCmdEditMoreTests();
         registerCmdClipTests();
         registerCmdClipMoreTests();
+        registerImportAudioTests();
         registerTimeGridTests(); // after edit+clip so a grid crash does not block engine results
         return Test::runAll();
     }
@@ -200,6 +202,7 @@ int main(int argc, char** argv) {
             registerCmdEditMoreTests();
             registerCmdClipTests();
             registerCmdClipMoreTests();
+            registerImportAudioTests();
             registerTimeGridTests();
             return Test::runAll();
         }
@@ -221,6 +224,7 @@ int main(int argc, char** argv) {
     const Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (capture.empty() ? 0 : SDL_WINDOW_HIDDEN);
     SDL_Window* win = SDL_CreateWindow("Polyhymnia", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 800, flags);
     if (!win) return 1;
+    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     SDL_GLContext gl = SDL_GL_CreateContext(win);
     SDL_GL_MakeCurrent(win, gl);
     SDL_GL_SetSwapInterval(1);
@@ -279,6 +283,12 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) App::requestQuit();
+            if (e.type == SDL_DROPFILE && e.drop.file) {
+                int mx = 0, my = 0;
+                SDL_GetMouseState(&mx, &my);
+                App::onFileDrop(e.drop.file, static_cast<float>(mx), static_cast<float>(my));
+                SDL_free(e.drop.file);
+            }
         }
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();

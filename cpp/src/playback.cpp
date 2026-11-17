@@ -11,17 +11,22 @@ static std::atomic<bool> playing{false};
 static std::atomic<bool> loopOn{false};
 static std::atomic<long long> head{0};
 static const Session::Document* session = nullptr;
+static uint32_t planTouch = 0;
 static long long loopEnd = 48000 * 8;
 
 void setDocument(const Session::Document* doc) {
     session = doc;
-    if (doc) {
-        long long end = 0;
-        for (const auto& t : doc->tracks)
-            for (const auto& c : t.clips)
-                end = std::max(end, c.start + c.length);
-        if (end > 0) loopEnd = end;
+    if (!doc) {
+        Mix::clearPlan();
+        planTouch = 0;
+        return;
     }
+    if (doc->touch != planTouch) {
+        Mix::rebuildPlan(*doc);
+        planTouch = doc->touch;
+    }
+    const long long end = Mix::sessionLength(*doc);
+    if (end > 0) loopEnd = end;
 }
 
 void play() { playing.store(true); }
@@ -41,7 +46,7 @@ void fillOutput(float* stereo, unsigned frames, double sampleRate) {
         return;
     }
     const long long pos = head.load();
-    Mix::render(*session, pos, stereo, frames, sampleRate);
+    Mix::render(pos, stereo, frames, sampleRate);
     long long next = pos + (long long)frames;
     if (loopOn.load() && next >= loopEnd) next = 0;
     head.store(next);

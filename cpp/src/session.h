@@ -2,6 +2,7 @@
 #pragma once
 #include "tempo.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,7 @@ struct Source {
 
 struct Document {
     int version = 1;
+    uint32_t touch = 0;
     std::string name = "Untitled";
     double sampleRate = 48000.0;
     Time::Map time;

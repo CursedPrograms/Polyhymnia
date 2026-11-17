@@ -83,6 +83,47 @@ static void splashSay(const char* status, float progress) {
     SDL_GL_SwapWindow(splashWin);
 }
 
+static std::string dirSlash(const char* d) {
+    std::string s = d ? d : "";
+    if (!s.empty() && s.back() != '/' && s.back() != '\\') s += "/";
+    return s;
+}
+
+static int runAudioTest(const char* outDir) {
+    const std::string dir = dirSlash(outDir);
+    const std::string tonePath = dir + "test_tone.wav";
+    const std::string projectPath = dir + "tone-test.polyhymnia";
+    const std::string renderPath = dir + "tone-render.wav";
+    std::string err;
+    const int rate = 48000;
+    if (!Mix::writeTestToneWav(tonePath, 1000.0, 2.0, rate, err)) {
+        fprintf(stderr, "audiotest: %s\n", err.c_str());
+        return 1;
+    }
+    Session::Document doc = Session::empty();
+    doc.name = "Tone test";
+    doc.sampleRate = rate;
+    doc.sources.push_back({"tone", "test_tone.wav", rate, 2});
+    doc.tracks.push_back({"t1", "Tone", false, false, 0, 0, {}});
+    doc.tracks.back().clips.push_back({"c1", "tone", 0, 0, rate * 2, 0.0f, {}, {}});
+    doc.touch = 1;
+    doc.folder = dir;
+    if (!Project::save(doc, projectPath, err)) {
+        fprintf(stderr, "audiotest: %s\n", err.c_str());
+        return 1;
+    }
+    if (!Mix::renderToWav(doc, renderPath, err)) {
+        fprintf(stderr, "audiotest: %s\n", err.c_str());
+        return 1;
+    }
+    if (!Mix::verifyToneInWav(renderPath, 1000.0, rate, err)) {
+        fprintf(stderr, "audiotest: %s\n", err.c_str());
+        return 1;
+    }
+    fprintf(stderr, "audiotest: 1 kHz tone ok, length %d samples\n", rate * 2);
+    return 0;
+}
+
 static int runRender(const char* projectPath, const char* outWav) {
     Session::Document doc;
     std::string err;
@@ -105,6 +146,7 @@ int main(int argc, char** argv) {
         if (a == "--capture" && i + 1 < argc) capture = argv[++i];
         else if (a == "--script" && i + 1 < argc) scriptName = argv[++i];
         else if (a == "--render" && i + 2 < argc) return runRender(argv[++i], argv[++i]);
+        else if (a == "--audiotest" && i + 1 < argc) return runAudioTest(argv[++i]);
     }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) return 1;

@@ -6,6 +6,7 @@ namespace Session {
 Document empty() {
     Document d;
     d.name = "Untitled";
+    d.touch = 1;
     return d;
 }
 
@@ -30,6 +31,7 @@ Document demo() {
     d.tracks.push_back(b);
     d.markers.push_back({"m1", "Intro", 0});
     d.markers.push_back({"m2", "Verse", 48000});
+    d.touch = 1;
     return d;
 }
 

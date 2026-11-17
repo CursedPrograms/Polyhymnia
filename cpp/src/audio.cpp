@@ -1,7 +1,6 @@
 // Polyhymnia - miniaudio playback device: enumerate outputs and keep a stream open (silence until the mix runs).
 #define MINIAUDIO_IMPLEMENTATION
 #define MA_NO_ENCODING
-#define MA_NO_DECODING
 #define MA_NO_GENERATION
 #include "miniaudio.h"
 

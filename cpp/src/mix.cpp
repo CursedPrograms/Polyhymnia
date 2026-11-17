@@ -1,16 +1,24 @@
-// Polyhymnia - realtime/offline mix of session clips with gain, pan, mute and solo.
+// Polyhymnia - realtime/offline mix with miniaudio decode (after SoundCraft crates/mix).
 #include "mix.h"
 
+#include "miniaudio.h"
+
 #include <algorithm>
+#include <atomic>
 #include <cmath>
-#include <cstring>
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <mutex>
 #include <unordered_map>
-#include <vector>
+
+namespace fs = std::filesystem;
 
 namespace Mix {
 
-static std::unordered_map<std::string, Buffer> cache;
+static std::shared_ptr<const MixPlan> livePlan;
+static std::mutex peakMtx;
+static std::unordered_map<std::string, Peaks> peakCache;
 
 static float dbToLin(float db) { return std::pow(10.0f, db / 20.0f); }
 
@@ -27,70 +35,209 @@ static float fadeGain(const Session::Fade& f, long long posInClip, bool fadeIn) 
     }
 }
 
-// Built-in 440 Hz tone for missing demo WAV files (after SoundCraft demo synthesis idea).
-static void fillSine(Buffer& b, double seconds, double hz = 440.0) {
+static void resampleStereo(const std::vector<float>& in, int inRate, int inFrames, int outRate, std::vector<float>& out) {
+    if (inRate == outRate || inFrames <= 0) {
+        out = in;
+        return;
+    }
+    const int outFrames = (int)((long long)inFrames * outRate / inRate);
+    out.resize((size_t)outFrames * 2);
+    const double ratio = (double)inRate / (double)outRate;
+    for (int i = 0; i < outFrames; ++i) {
+        const double src = i * ratio;
+        const int i0 = (int)src;
+        const int i1 = std::min(i0 + 1, inFrames - 1);
+        const float frac = (float)(src - i0);
+        for (int ch = 0; ch < 2; ++ch) {
+            const float a = in[(size_t)i0 * 2 + (size_t)ch];
+            const float b = in[(size_t)i1 * 2 + (size_t)ch];
+            out[(size_t)i * 2 + (size_t)ch] = a + (b - a) * frac;
+        }
+    }
+}
+
+static void fillSine(Buffer& b, double seconds, double hz) {
     const int n = (int)(b.sampleRate * seconds);
-    b.mono.resize((size_t)n);
-    for (int i = 0; i < n; ++i)
-        b.mono[(size_t)i] = 0.25f * (float)std::sin(2.0 * 3.141592653589793 * hz * i / b.sampleRate);
+    b.frames = n;
+    b.stereo.resize((size_t)n * 2);
+    for (int i = 0; i < n; ++i) {
+        const float s = 0.25f * (float)std::sin(2.0 * 3.141592653589793 * hz * i / b.sampleRate);
+        b.stereo[(size_t)i * 2] = s;
+        b.stereo[(size_t)i * 2 + 1] = s;
+    }
+    b.synthetic = true;
 }
 
 static void fillClick(Buffer& b) {
     const int n = b.sampleRate / 10;
-    b.mono.assign((size_t)n, 0.0f);
-    for (int i = 0; i < n / 20; ++i) b.mono[(size_t)i] = 0.5f * (1.0f - (float)i / (float)(n / 20));
-}
-
-bool ensureSource(const Session::Document& doc, const std::string& sourceId, Buffer& buf) {
-    const auto it = cache.find(sourceId);
-    if (it != cache.end()) {
-        buf = it->second;
-        return true;
+    b.frames = n;
+    b.stereo.assign((size_t)n * 2, 0.0f);
+    for (int i = 0; i < n / 20; ++i) {
+        const float v = 0.5f * (1.0f - (float)i / (float)(n / 20));
+        b.stereo[(size_t)i * 2] = v;
+        b.stereo[(size_t)i * 2 + 1] = v;
     }
-    const Session::Source* src = nullptr;
-    for (const auto& s : doc.sources)
-        if (s.id == sourceId) { src = &s; break; }
-    if (!src) return false;
-    Buffer fresh;
-    fresh.sampleRate = src->sampleRate > 0 ? src->sampleRate : 48000;
-    if (src->path.find("click") != std::string::npos) fillClick(fresh);
-    else fillSine(fresh, 4.0);
-    cache[sourceId] = fresh;
-    buf = fresh;
-    return true;
+    b.synthetic = true;
 }
 
-void render(const Session::Document& doc, long long startSample, float* outStereo, unsigned frames, double sampleRate) {
-    std::memset(outStereo, 0, frames * 2 * sizeof(float));
-    bool anySolo = false;
-    for (const auto& t : doc.tracks)
-        if (t.solo) { anySolo = true; break; }
+static fs::path resolveAudioPath(const Session::Document& doc, const std::string& relOrAbs) {
+    fs::path p = fs::u8path(relOrAbs);
+    if (p.is_relative() && !doc.folder.empty()) p = fs::u8path(doc.folder) / p;
+    return p;
+}
+
+// Load one source off the audio/UI thread; missing files become a short placeholder tone.
+static std::shared_ptr<const Buffer> loadSource(const Session::Document& doc, const Session::Source& src, std::string& missing) {
+    auto out = std::make_shared<Buffer>();
+    out->sampleRate = (int)doc.sampleRate;
+    const fs::path path = resolveAudioPath(doc, src.path);
+    std::error_code ec;
+    if (!fs::exists(path, ec)) {
+        if (src.path.find("click") != std::string::npos) fillClick(*out);
+        else fillSine(*out, 4.0, 440.0);
+        if (missing.empty()) missing = "Missing audio: using placeholder tone for " + src.path;
+        else missing += "; " + src.path;
+        return out;
+    }
+    ma_decoder decoder;
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 0, 0);
+    if (ma_decoder_init_file(path.u8string().c_str(), &cfg, &decoder) != MA_SUCCESS) {
+        fillSine(*out, 4.0, 440.0);
+        if (missing.empty()) missing = "Could not decode: " + src.path;
+        return out;
+    }
+    const int channels = (int)decoder.outputChannels;
+    const int fileRate = (int)decoder.outputSampleRate;
+    std::vector<float> raw;
+    const ma_uint32 chunk = 4096;
+    std::vector<float> chunkBuf(chunk * (ma_uint32)channels);
+    ma_uint64 framesRead = 0;
+    ma_uint64 totalFrames = 0;
+    ma_decoder_get_length_in_pcm_frames(&decoder, &totalFrames);
+    if (totalFrames > 0) raw.reserve((size_t)totalFrames * 2);
+    for (;;) {
+        ma_uint64 got = 0;
+        const ma_result r = ma_decoder_read_pcm_frames(&decoder, chunkBuf.data(), chunk, &got);
+        if (r != MA_SUCCESS || got == 0) break;
+        for (ma_uint64 i = 0; i < got; ++i) {
+            if (channels == 1) {
+                const float m = chunkBuf[(size_t)i];
+                raw.push_back(m);
+                raw.push_back(m);
+            } else {
+                raw.push_back(chunkBuf[(size_t)i * (size_t)channels]);
+                raw.push_back(chunkBuf[(size_t)i * (size_t)channels + 1]);
+            }
+        }
+        framesRead += got;
+        if (totalFrames > 0 && framesRead >= totalFrames) break;
+    }
+    ma_decoder_uninit(&decoder);
+    const int inFrames = (int)(raw.size() / 2);
+    std::vector<float> stereo;
+    resampleStereo(raw, fileRate, inFrames, out->sampleRate, stereo);
+    out->frames = (int)(stereo.size() / 2);
+    out->stereo = std::move(stereo);
+    out->synthetic = false;
+    return out;
+}
+
+Peaks buildPeaks(const Buffer& buf, int buckets) {
+    Peaks p;
+    if (buf.frames <= 0 || buckets <= 0) return p;
+    p.buckets = buckets;
+    p.minMax.resize((size_t)buckets * 2, 0.0f);
+    const int per = std::max(1, buf.frames / buckets);
+    for (int b = 0; b < buckets; ++b) {
+        const int start = b * per;
+        const int end = std::min(buf.frames, start + per);
+        float mn = 1.0f, mx = -1.0f;
+        for (int i = start; i < end; ++i) {
+            const float s = 0.5f * (buf.stereo[(size_t)i * 2] + buf.stereo[(size_t)i * 2 + 1]);
+            mn = std::min(mn, s);
+            mx = std::max(mx, s);
+        }
+        if (end <= start) { mn = 0; mx = 0; }
+        p.minMax[(size_t)b * 2] = mn;
+        p.minMax[(size_t)b * 2 + 1] = mx;
+    }
+    return p;
+}
+
+void clearPlan() { std::atomic_store(&livePlan, std::shared_ptr<const MixPlan>{}); }
+
+void rebuildPlan(const Session::Document& doc) {
+    auto plan = std::make_shared<MixPlan>();
+    plan->sampleRate = doc.sampleRate;
+    plan->length = sessionLength(doc);
+    std::unordered_map<std::string, std::shared_ptr<const Buffer>> loaded;
+    for (const auto& s : doc.sources)
+        loaded[s.id] = loadSource(doc, s, plan->missingNote);
     for (const auto& track : doc.tracks) {
+        MixPlan::TrackPlay tp;
+        tp.track = track;
+        for (const auto& clip : track.clips) {
+            MixPlan::ClipPlay cp;
+            cp.clip = clip;
+            auto it = loaded.find(clip.sourceId);
+            cp.audio = it != loaded.end() ? it->second : std::make_shared<Buffer>();
+            cp.peaks = buildPeaks(*cp.audio, 256);
+            tp.clips.push_back(cp);
+        }
+        plan->tracks.push_back(tp);
+    }
+    std::atomic_store(&livePlan, std::shared_ptr<const MixPlan>(plan));
+}
+
+const std::shared_ptr<const MixPlan>& currentPlan() {
+    static std::shared_ptr<const MixPlan> empty;
+    auto p = std::atomic_load(&livePlan);
+    return p ? p : empty;
+}
+
+void render(long long startSample, float* outStereo, unsigned frameCount, double sampleRate) {
+    std::memset(outStereo, 0, frameCount * 2 * sizeof(float));
+    const auto plan = std::atomic_load(&livePlan);
+    if (!plan) return;
+    bool anySolo = false;
+    for (const auto& t : plan->tracks)
+        if (t.track.solo) { anySolo = true; break; }
+    for (const auto& tplay : plan->tracks) {
+        const auto& track = tplay.track;
         if (track.mute) continue;
         if (anySolo && !track.solo) continue;
         const float trackGain = dbToLin(track.gainDb);
         const float pan = std::clamp(track.pan, -1.0f, 1.0f);
         const float lPan = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
         const float rPan = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
-        for (const auto& clip : track.clips) {
-            Buffer srcBuf;
-            if (!ensureSource(doc, clip.sourceId, srcBuf) || srcBuf.mono.empty()) continue;
-            const double ratio = sampleRate / (double)srcBuf.sampleRate;
-            for (unsigned i = 0; i < frames; ++i) {
+        for (const auto& cplay : tplay.clips) {
+            const auto& clip = cplay.clip;
+            const auto& src = cplay.audio;
+            if (!src || src->frames <= 0) continue;
+            const double ratio = sampleRate / (double)src->sampleRate;
+            const float* pcm = src->stereo.data();
+            for (unsigned i = 0; i < frameCount; ++i) {
                 const long long timeline = startSample + (long long)i;
                 if (timeline < clip.start || timeline >= clip.start + clip.length) continue;
                 const long long inClip = timeline - clip.start;
                 const long long srcPos = clip.offset + (long long)(inClip / ratio);
-                if (srcPos < 0 || srcPos >= (long long)srcBuf.mono.size()) continue;
-                float s = srcBuf.mono[(size_t)srcPos];
-                s *= dbToLin(clip.gainDb) * trackGain;
-                s *= fadeGain(clip.fadeIn, inClip, true);
+                if (srcPos < 0 || srcPos >= src->frames) continue;
+                float l = pcm[(size_t)srcPos * 2];
+                float r = pcm[(size_t)srcPos * 2 + 1];
+                const float g = dbToLin(clip.gainDb) * trackGain;
+                l *= g;
+                r *= g;
+                const float fi = fadeGain(clip.fadeIn, inClip, true);
+                l *= fi;
+                r *= fi;
                 if (clip.fadeOut.len > 0 && inClip >= clip.length - clip.fadeOut.len) {
                     const long long tail = inClip - (clip.length - clip.fadeOut.len);
-                    s *= 1.0f - fadeGain(clip.fadeOut, tail, true);
+                    const float fo = 1.0f - fadeGain(clip.fadeOut, tail, true);
+                    l *= fo;
+                    r *= fo;
                 }
-                outStereo[i * 2] += s * lPan;
-                outStereo[i * 2 + 1] += s * rPan;
+                outStereo[i * 2] += l * lPan;
+                outStereo[i * 2 + 1] += r * rPan;
             }
         }
     }
@@ -105,6 +252,7 @@ long long sessionLength(const Session::Document& doc) {
 }
 
 bool renderToWav(const Session::Document& doc, const std::string& path, std::string& err) {
+    rebuildPlan(doc);
     const long long total = sessionLength(doc);
     const int rate = (int)doc.sampleRate;
     if (total <= 0 || rate <= 0) { err = "Nothing to render."; return false; }
@@ -136,7 +284,7 @@ bool renderToWav(const Session::Document& doc, const std::string& path, std::str
     std::vector<float> block(4096 * 2);
     for (long long pos = 0; pos < total;) {
         const unsigned want = (unsigned)std::min<long long>(4096, total - pos);
-        render(doc, pos, block.data(), want, rate);
+        render(pos, block.data(), want, rate);
         for (unsigned i = 0; i < want * 2; ++i) {
             float s = std::clamp(block[i], -1.0f, 1.0f);
             const int16_t v = (int16_t)(s * 32767.0f);
@@ -148,4 +296,107 @@ bool renderToWav(const Session::Document& doc, const std::string& path, std::str
     return true;
 }
 
+bool writeTestToneWav(const std::string& path, double hz, double seconds, int sampleRate, std::string& err) {
+    Buffer b;
+    b.sampleRate = sampleRate;
+    fillSine(b, seconds, hz);
+    FILE* f = nullptr;
+#ifdef _WIN32
+    fopen_s(&f, path.c_str(), "wb");
+#else
+    f = fopen(path.c_str(), "wb");
+#endif
+    if (!f) { err = "Could not write tone WAV."; return false; }
+    const int channels = 2;
+    const int bits = 16;
+    const int byteRate = sampleRate * channels * bits / 8;
+    const int dataBytes = b.frames * channels * (bits / 8);
+    auto w32 = [&](uint32_t v) { fwrite(&v, 4, 1, f); };
+    auto w16 = [&](uint16_t v) { fwrite(&v, 2, 1, f); };
+    fwrite("RIFF", 1, 4, f);
+    w32((uint32_t)(36 + dataBytes));
+    fwrite("WAVEfmt ", 1, 8, f);
+    w32(16);
+    w16(1);
+    w16((uint16_t)channels);
+    w32((uint32_t)sampleRate);
+    w32((uint32_t)byteRate);
+    w16((uint16_t)(channels * bits / 8));
+    w16((uint16_t)bits);
+    fwrite("data", 1, 4, f);
+    w32((uint32_t)dataBytes);
+    for (int i = 0; i < b.frames; ++i) {
+        float s = b.stereo[(size_t)i * 2];
+        s = std::clamp(s, -1.0f, 1.0f);
+        const int16_t v = (int16_t)(s * 32767.0f);
+        fwrite(&v, 2, 1, f);
+        fwrite(&v, 2, 1, f);
+    }
+    fclose(f);
+    return true;
 }
+
+bool verifyToneInWav(const std::string& path, double expectHz, double sampleRate, std::string& err) {
+    ma_decoder decoder;
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, 0);
+    if (ma_decoder_init_file(path.c_str(), &cfg, &decoder) != MA_SUCCESS) { err = "Could not read render."; return false; }
+    ma_uint64 total = 0;
+    ma_decoder_get_length_in_pcm_frames(&decoder, &total);
+    const int rate = (int)decoder.outputSampleRate;
+    if ((int)total < rate) { err = "Render too short."; ma_decoder_uninit(&decoder); return false; }
+    float peak = 0.0f;
+    int crossings = 0;
+    float prev = 0.0f;
+    bool havePrev = false;
+    std::vector<float> chunk(4096);
+    ma_uint64 read = 0;
+    while (read < total) {
+        ma_uint64 got = 0;
+        ma_decoder_read_pcm_frames(&decoder, chunk.data(), 4096, &got);
+        if (got == 0) break;
+        for (ma_uint64 i = 0; i < got; ++i) {
+            const float s = chunk[i];
+            peak = std::max(peak, std::fabs(s));
+            if (havePrev && ((prev <= 0 && s > 0) || (prev >= 0 && s < 0))) ++crossings;
+            prev = s;
+            havePrev = true;
+        }
+        read += got;
+    }
+    ma_decoder_uninit(&decoder);
+    const double seconds = (double)total / (double)rate;
+    const double zcPerSec = crossings / (2.0 * seconds);
+    if (peak < 0.05f) { err = "Peak too low."; return false; }
+    if (std::fabs(zcPerSec - expectHz) > expectHz * 0.12) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Tone frequency mismatch (got %.1f Hz, peak %.3f).", zcPerSec, peak);
+        err = buf;
+        return false;
+    }
+    return true;
+}
+
+Peaks peaksForClip(const MixPlan::ClipPlay& clip, int bucketCount) {
+    if (clip.audio) return buildPeaks(*clip.audio, bucketCount);
+    return {};
+}
+
+const Peaks& cachedPeaks(const std::string& sourceId, const Session::Clip& clip, int buckets) {
+    const std::string key = sourceId + ":" + clip.id + ":" + std::to_string(buckets);
+    std::lock_guard<std::mutex> g(peakMtx);
+    auto& p = peakCache[key];
+    if (p.buckets == 0) {
+        const auto plan = std::atomic_load(&livePlan);
+        if (plan) {
+            for (const auto& t : plan->tracks)
+                for (const auto& c : t.clips)
+                    if (c.clip.id == clip.id && c.clip.sourceId == sourceId) {
+                        p = buildPeaks(*c.audio, buckets);
+                        break;
+                    }
+        }
+    }
+    return p;
+}
+
+} // namespace Mix

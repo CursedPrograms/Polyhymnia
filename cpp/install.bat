@@ -9,6 +9,6 @@ if not errorlevel 1 ( echo Polyhymnia is open: close it and run this again. & ex
 set "INST=%LOCALAPPDATA%\Programs\Polyhymnia"
 if not exist "%INST%" mkdir "%INST%"
 xcopy /e /i /q /y "%SRC%\*" "%INST%\" >nul || ( echo Couldn't copy to %INST% & exit /b 1 )
-powershell -NoProfile -Command "$s=New-Object -ComObject WScript.Shell; foreach($d in @([Environment]::GetFolderPath('Programs'),[Environment]::GetFolderPath('Desktop'))){ $l=$s.CreateShortcut((Join-Path $d 'Polyhymnia.lnk')); $l.TargetPath='%INST%\Polyhymnia.exe'; $l.WorkingDirectory='%INST%'; $l.IconLocation='%INST%\Polyhymnia.exe,0'; $l.Description='Polyhymnia: arrange and mix music'; $l.Save() }"
+powershell -NoProfile -Command "$s=New-Object -ComObject WScript.Shell; foreach($d in @([Environment]::GetFolderPath('Programs'),[Environment]::GetFolderPath('Desktop'))){ Remove-Item (Join-Path $d 'Polyhymnia.lnk') -Force -ErrorAction SilentlyContinue; $l=$s.CreateShortcut((Join-Path $d 'Atelier - Polyhymnia.lnk')); $l.TargetPath='%INST%\Polyhymnia.exe'; $l.WorkingDirectory='%INST%'; $l.IconLocation='%INST%\Polyhymnia.exe,0'; $l.Description='Polyhymnia: arrange and mix music'; $l.Save() }"
 echo Installed: %INST%
 exit /b 0

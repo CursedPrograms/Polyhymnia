@@ -229,10 +229,8 @@ void rebuildPlan(const Session::Document& doc) {
     std::atomic_store(&livePlan, std::shared_ptr<const MixPlan>(plan));
 }
 
-const std::shared_ptr<const MixPlan>& currentPlan() {
-    static std::shared_ptr<const MixPlan> empty;
-    auto p = std::atomic_load(&livePlan);
-    return p ? p : empty;
+std::shared_ptr<const MixPlan> currentPlan() {
+    return std::atomic_load(&livePlan);
 }
 
 void render(long long startSample, float* outStereo, unsigned frameCount, double sampleRate) {

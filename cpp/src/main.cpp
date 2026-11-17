@@ -1,8 +1,10 @@
 // Polyhymnia - music studio. SDL2, OpenGL 3, Dear ImGui. miniaudio for the device.
 //   Polyhymnia [--script NAME] [--capture shot.bmp]
 #include "app.h"
+#include "audio.h"
 #include "lang.h"
 #include "mix.h"
+#include "playback.h"
 #include "project.h"
 #include "splash.h"
 #include "test_runner.h"
@@ -305,6 +307,8 @@ int main(int argc, char** argv) {
         SDL_GL_SwapWindow(win);
     }
 
+    Audio::close();
+    Playback::setDocument(nullptr);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

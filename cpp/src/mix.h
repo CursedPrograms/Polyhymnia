@@ -42,7 +42,7 @@ struct MixPlan {
 
 void clearPlan();
 void rebuildPlan(const Session::Document& doc);
-const std::shared_ptr<const MixPlan>& currentPlan();
+std::shared_ptr<const MixPlan> currentPlan();
 
 void render(long long startSample, float* outStereo, unsigned frameCount, double sampleRate);
 long long sessionLength(const Session::Document& doc);

@@ -38,6 +38,8 @@
 8. Phase 5 engine port: `Polyhymnia.exe --selftest` 105/105 (edit/tests.rs, cmd/edit*, cmd/clip*, grid.rs, clip.rs);
    `engine_edit.cpp` from `edit.rs`; `consolidate.cpp` from `io/render.rs consolidate`; Spot dialog, `edit_drag`, Smart
    zones; Editor routes through EngEdit; `--script editing` and `spot_test` pass.
+9. 0a (`--script edit --capture` segfault): fixed dangling `const std::shared_ptr<const MixPlan>&` return from
+   `Mix::currentPlan()` and closed audio device before shutdown; all 6 script hooks and 147 selftests pass.
 
 ## Cursor asks
 

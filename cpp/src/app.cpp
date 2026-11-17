@@ -2,11 +2,13 @@
 #include "app.h"
 #include "audio.h"
 #include "lang.h"
+#include "project.h"
 #include "splash.h"
 
 #include <imgui.h>
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <string>
@@ -28,6 +30,10 @@ static int devIdx = -1;
 static float bufferSlider = 512;
 static std::string audioNote;
 static std::map<std::string, std::string> prefs;
+static Session::Document doc;
+static bool hasDoc = false;
+static std::string docPath;
+static std::string sessionNote;
 
 static const ImU32 C_BG = IM_COL32(0x1a, 0x1a, 0x1a, 255), C_PANEL = IM_COL32(0x21, 0x21, 0x21, 255), C_WELL = IM_COL32(0x2a, 0x2a, 0x2a, 255),
                    C_LINE = IM_COL32(0x33, 0x33, 0x33, 255), C_TEXT = IM_COL32(0xd6, 0xd6, 0xd6, 255), C_DIM = IM_COL32(0x9a, 0x9a, 0x9a, 255),
@@ -97,12 +103,45 @@ static void applyAudioDevice() {
     }
 }
 
+static void newDoc() {
+    doc = Session::empty();
+    hasDoc = true;
+    docPath.clear();
+    sessionNote.clear();
+}
+
+static void saveDoc() {
+    if (!hasDoc) return;
+    if (docPath.empty()) docPath = (std::filesystem::u8path(prefDir) / "Untitled.polyhymnia").u8string();
+    std::string err;
+    if (Project::save(doc, docPath, err)) sessionNote = T("Saved");
+    else sessionNote = err;
+}
+
+static void openDemoDoc() {
+    doc = Session::demo();
+    hasDoc = true;
+    docPath.clear();
+}
+
 static void drawLeftPanel() {
     ImGui::BeginChild("left", ImVec2(280, 0), true);
     ImGui::TextUnformatted(T("SESSION"));
     ImGui::Separator();
-    ImGui::TextDisabled("%s", T("No project open yet."));
-    ImGui::TextDisabled("%s", T("File > New to begin."));
+    if (!hasDoc) {
+        ImGui::TextDisabled("%s", T("No project open yet."));
+        ImGui::TextDisabled("%s", T("File > New to begin."));
+    } else {
+        ImGui::Text("%s", doc.name.c_str());
+        ImGui::Text("%s: %.1f BPM  %d/%d", T("Tempo"), doc.time.tempoBpm, doc.time.meter.num, doc.time.meter.den);
+        ImGui::Spacing();
+        ImGui::TextUnformatted(T("Tracks"));
+        for (const auto& t : doc.tracks) ImGui::BulletText("%s (%zu clips)", t.name.c_str(), t.clips.size());
+        ImGui::Spacing();
+        ImGui::TextUnformatted(T("Markers"));
+        for (const auto& m : doc.markers) ImGui::BulletText("%s @ %lld", m.name.c_str(), (long long)m.at);
+        if (!sessionNote.empty()) ImGui::TextWrapped("%s", sessionNote.c_str());
+    }
     ImGui::Spacing();
     ImGui::TextUnformatted(T("AUDIO"));
     ImGui::Separator();
@@ -115,7 +154,12 @@ static void drawCenter() {
     ImGui::BeginChild("edit", ImVec2(0, 0), true);
     ImGui::TextUnformatted(T("Edit window"));
     ImGui::Separator();
-    ImGui::TextDisabled("%s", T("Tracks and the timeline arrive in the next phases."));
+    if (hasDoc) {
+        ImGui::Text("%s", T("Timeline view comes in phase 4."));
+        ImGui::Text("%zu %s, %zu %s, %zu %s", doc.tracks.size(), T("tracks"), doc.sources.size(), T("sources"), doc.markers.size(), T("markers"));
+    } else {
+        ImGui::TextDisabled("%s", T("Tracks and the timeline arrive in the next phases."));
+    }
     ImGui::EndChild();
 }
 
@@ -189,9 +233,9 @@ void init(SDL_Window* win, const std::string& prefPath, const std::string& langu
 void frame() {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu(T("File"))) {
-            if (ImGui::MenuItem(T("New"), "Ctrl+N", false, false)) {}
-            if (ImGui::MenuItem(T("Open..."), "Ctrl+O", false, false)) {}
-            if (ImGui::MenuItem(T("Save"), "Ctrl+S", false, false)) {}
+            if (ImGui::MenuItem(T("New"), "Ctrl+N")) newDoc();
+            if (ImGui::MenuItem(T("Open demo"), nullptr)) openDemoDoc();
+            if (ImGui::MenuItem(T("Save"), "Ctrl+S", false, hasDoc)) saveDoc();
             ImGui::Separator();
             if (ImGui::MenuItem(T("Preferences..."))) showPrefs = true;
             ImGui::Separator();
@@ -219,8 +263,29 @@ void script(const std::string& name) {
         showPrefs = true;
         prefsPage = 1;
         fprintf(stderr, "skeleton: window up, audio device %s, preferences on Audio\n", Audio::isOpen() ? "open" : "closed");
+        return;
+    }
+    if (name == "session") {
+        doc = Session::demo();
+        hasDoc = true;
+        const std::string path = prefDir + "session-test.polyhymnia";
+        std::string err;
+        if (!Project::save(doc, path, err)) {
+            fprintf(stderr, "session: save failed: %s\n", err.c_str());
+            return;
+        }
+        Session::Document round;
+        if (!Project::load(path, round, err)) {
+            fprintf(stderr, "session: load failed: %s\n", err.c_str());
+            return;
+        }
+        doc = round;
+        fprintf(stderr, "session: %zu tracks, %zu markers, saved and reopened %s\n", doc.tracks.size(), doc.markers.size(), path.c_str());
     }
 }
+
+const Session::Document& document() { return doc; }
+bool hasSession() { return hasDoc; }
 
 void setCaptureHints(bool prefs, int page) {
     showPrefs = prefs;

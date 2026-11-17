@@ -1,8 +1,9 @@
 // Polyhymnia - main window: menus, preferences, transport placeholders.
 #pragma once
+#include "session.h"
 #include <SDL.h>
-#include <string>
 #include <functional>
+#include <string>
 
 namespace App {
 using SplashFn = std::function<void(const char*, float)>;
@@ -12,4 +13,6 @@ void script(const std::string& name);
 bool wantsQuit();
 void requestQuit();
 void setCaptureHints(bool prefsOpen, int prefsPage);
+const Session::Document& document();
+bool hasSession();
 }

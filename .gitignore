@@ -1,0 +1,9 @@
+build/
+dist/
+cpp/build/
+cpp/dist/
+cpp/external/SDL2-*/
+cpp/external/imgui-*/
+cpp/external/miniaudio.h
+*.bmp
+shot-test.bmp

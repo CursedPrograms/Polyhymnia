@@ -1,0 +1,25 @@
+# Polyhymnia - yua (make_packs.py)
+File = Ju'un
+Help = Áantaj
+Quit = Xu'ulsik
+New = Túumben
+Open... = Je'ik...
+Save = Cha'paj
+Preferences... = Ba'ax tz'ite'...
+About Polyhymnia = Yo'olal Polyhymnia
+SESSION = SESIÓN
+No project open yet. = Minaan jeelmej.
+File > New to begin. = Archivo > Túumben.
+AUDIO = AUDIO
+Audio device open = Dispositivo audio
+Could not open the audio device = Ma tu paajtal u jeik
+Edit window = Ventana edición
+Tracks and the timeline arrive in the next phases. = U tsáaloob ku taal.
+Preferences = Ba'ax tz'ite'
+General = General
+Language = T'aan
+Audio = Audio
+Playback device = Dispositivo reproducción
+(default) = (tuux suuk)
+Buffer size (frames) = Búfer (frames)
+Apply = Aplicar

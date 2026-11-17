@@ -1,0 +1,233 @@
+// Polyhymnia - Edit window shell, preferences (language and audio device), test hooks.
+#include "app.h"
+#include "audio.h"
+#include "lang.h"
+#include "splash.h"
+
+#include <imgui.h>
+
+#include <cstdio>
+#include <fstream>
+#include <map>
+#include <string>
+
+#ifndef POLYHYMNIA_VERSION
+#define POLYHYMNIA_VERSION "0.1.0"
+#endif
+
+namespace App {
+
+static SDL_Window* mainWin = nullptr;
+static std::string prefDir, langDir;
+static bool quit = false;
+static bool showPrefs = false;
+static int prefsPage = 0;
+static bool showAbout = false;
+static int langIdx = 0;
+static int devIdx = -1;
+static float bufferSlider = 512;
+static std::string audioNote;
+static std::map<std::string, std::string> prefs;
+
+static const ImU32 C_BG = IM_COL32(0x1a, 0x1a, 0x1a, 255), C_PANEL = IM_COL32(0x21, 0x21, 0x21, 255), C_WELL = IM_COL32(0x2a, 0x2a, 0x2a, 255),
+                   C_LINE = IM_COL32(0x33, 0x33, 0x33, 255), C_TEXT = IM_COL32(0xd6, 0xd6, 0xd6, 255), C_DIM = IM_COL32(0x9a, 0x9a, 0x9a, 255),
+                   C_BLUE = IM_COL32(0x00, 0x7b, 0xb7, 255), C_DEEP = IM_COL32(0x00, 0x5c, 0x8a, 255);
+
+static ImVec4 col4(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
+
+// Atelier greys and blue; controls read better on the left.
+static void applyStyle() {
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.WindowRounding = 0;
+    s.FrameRounding = 2;
+    s.GrabRounding = 2;
+    s.WindowBorderSize = 0;
+    s.FrameBorderSize = 0;
+    s.WindowPadding = ImVec2(12, 10);
+    s.FramePadding = ImVec2(7, 4);
+    s.ItemSpacing = ImVec2(6, 7);
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_Text] = col4(C_TEXT);
+    c[ImGuiCol_TextDisabled] = col4(C_DIM);
+    c[ImGuiCol_WindowBg] = col4(C_PANEL);
+    c[ImGuiCol_ChildBg] = col4(C_PANEL);
+    c[ImGuiCol_Border] = col4(C_LINE);
+    c[ImGuiCol_FrameBg] = col4(C_WELL);
+    c[ImGuiCol_CheckMark] = col4(C_BLUE);
+    c[ImGuiCol_SliderGrab] = col4(C_BLUE);
+    c[ImGuiCol_SliderGrabActive] = col4(C_DEEP);
+    c[ImGuiCol_Button] = col4(IM_COL32(0x33, 0x33, 0x33, 255));
+    c[ImGuiCol_ButtonHovered] = col4(C_DEEP);
+    c[ImGuiCol_ButtonActive] = col4(C_BLUE);
+    c[ImGuiCol_Header] = col4(IM_COL32(0x33, 0x33, 0x33, 255));
+    c[ImGuiCol_HeaderHovered] = col4(C_DEEP);
+    c[ImGuiCol_HeaderActive] = col4(C_BLUE);
+    c[ImGuiCol_MenuBarBg] = col4(C_BG);
+}
+
+static void loadPrefs() {
+    std::ifstream f(prefDir + "polyhymnia.ini");
+    std::string line;
+    while (std::getline(f, line)) {
+        const size_t eq = line.find('=');
+        if (eq != std::string::npos) prefs[line.substr(0, eq)] = line.substr(eq + 1);
+    }
+    if (auto it = prefs.find("lang"); it != prefs.end()) {
+        const auto& packs = Lang::packs();
+        for (size_t i = 0; i < packs.size(); ++i)
+            if (packs[i].code == it->second) langIdx = (int)i;
+    }
+    if (auto it = prefs.find("buffer"); it != prefs.end()) bufferSlider = (float)std::stoi(it->second);
+    if (auto it = prefs.find("audio"); it != prefs.end()) devIdx = std::stoi(it->second);
+}
+
+static void savePrefs() {
+    std::ofstream f(prefDir + "polyhymnia.ini");
+    f << "lang=" << Lang::current() << "\n";
+    f << "buffer=" << (int)bufferSlider << "\n";
+    const auto& devs = Audio::playbackDevices();
+    if (devIdx >= 0) f << "audio=" << devIdx << "\n";
+}
+
+static void applyAudioDevice() {
+    if (Audio::open(devIdx, (unsigned)bufferSlider)) {
+        audioNote = T("Audio device open") + std::string(": ") + Audio::activeDeviceName();
+    } else {
+        audioNote = T("Could not open the audio device");
+    }
+}
+
+static void drawLeftPanel() {
+    ImGui::BeginChild("left", ImVec2(280, 0), true);
+    ImGui::TextUnformatted(T("SESSION"));
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", T("No project open yet."));
+    ImGui::TextDisabled("%s", T("File > New to begin."));
+    ImGui::Spacing();
+    ImGui::TextUnformatted(T("AUDIO"));
+    ImGui::Separator();
+    ImGui::TextWrapped("%s", audioNote.c_str());
+    ImGui::EndChild();
+}
+
+static void drawCenter() {
+    ImGui::SameLine();
+    ImGui::BeginChild("edit", ImVec2(0, 0), true);
+    ImGui::TextUnformatted(T("Edit window"));
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", T("Tracks and the timeline arrive in the next phases."));
+    ImGui::EndChild();
+}
+
+static void drawPrefs() {
+    if (!showPrefs) return;
+    ImGui::SetNextWindowSize(ImVec2(520, 360), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(T("Preferences"), &showPrefs)) {
+        if (ImGui::BeginTabBar("prefs")) {
+            if (ImGui::BeginTabItem(T("General"))) {
+                prefsPage = 0;
+                const auto& packs = Lang::packs();
+                if (ImGui::BeginCombo(T("Language"), packs[langIdx].name.c_str())) {
+                    for (int i = 0; i < (int)packs.size(); ++i) {
+                        if (ImGui::Selectable(packs[i].name.c_str(), i == langIdx)) {
+                            langIdx = i;
+                            Lang::load(langDir, packs[i].code);
+                            savePrefs();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(T("Audio"))) {
+                prefsPage = 1;
+                const auto& devs = Audio::playbackDevices();
+                const char* preview = devIdx >= 0 && devIdx < (int)devs.size() ? devs[devIdx].name.c_str() : T("(default)");
+                if (ImGui::BeginCombo(T("Playback device"), preview)) {
+                    if (ImGui::Selectable(T("(default)"), devIdx < 0)) devIdx = -1;
+                    for (int i = 0; i < (int)devs.size(); ++i) {
+                        if (ImGui::Selectable(devs[i].name.c_str(), i == devIdx)) devIdx = i;
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::SliderFloat(T("Buffer size (frames)"), &bufferSlider, 128, 2048, "%.0f");
+                if (ImGui::Button(T("Apply"))) {
+                    applyAudioDevice();
+                    savePrefs();
+                }
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+    }
+    ImGui::End();
+}
+
+static void drawAbout() {
+    if (!showAbout) return;
+    ImGui::SetNextWindowSize(ImVec2(Splash::W, Splash::H));
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::Begin(T("About Polyhymnia"), &showAbout, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse)) {
+        Splash::draw(ImGui::GetWindowDrawList(), ImGui::GetWindowPos().x, ImGui::GetWindowPos().y, nullptr, -1);
+        if (ImGui::InvisibleButton("close", ImVec2(Splash::W, Splash::H))) showAbout = false;
+    }
+    ImGui::End();
+}
+
+void init(SDL_Window* win, const std::string& prefPath, const std::string& languageDir, SplashFn splash) {
+    mainWin = win;
+    prefDir = prefPath;
+    langDir = languageDir;
+    applyStyle();
+    loadPrefs();
+    Lang::load(langDir, Lang::packs()[langIdx].code);
+    if (splash) splash(T("Opening the audio device..."), 0.7f);
+    applyAudioDevice();
+    if (splash) splash(T("Ready"), 1.0f);
+}
+
+void frame() {
+    if (ImGui::BeginMainMenuBar()) {
+        if (ImGui::BeginMenu(T("File"))) {
+            if (ImGui::MenuItem(T("New"), "Ctrl+N", false, false)) {}
+            if (ImGui::MenuItem(T("Open..."), "Ctrl+O", false, false)) {}
+            if (ImGui::MenuItem(T("Save"), "Ctrl+S", false, false)) {}
+            ImGui::Separator();
+            if (ImGui::MenuItem(T("Preferences..."))) showPrefs = true;
+            ImGui::Separator();
+            if (ImGui::MenuItem(T("Quit"), "Alt+F4")) quit = true;
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu(T("Help"))) {
+            if (ImGui::MenuItem(T("About Polyhymnia"))) showAbout = true;
+            ImGui::EndMenu();
+        }
+        ImGui::EndMainMenuBar();
+    }
+    ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - ImGui::GetFrameHeight()));
+    ImGui::Begin("workspace", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+    drawLeftPanel();
+    drawCenter();
+    ImGui::End();
+    drawPrefs();
+    drawAbout();
+}
+
+void script(const std::string& name) {
+    if (name == "skeleton") {
+        showPrefs = true;
+        prefsPage = 1;
+        fprintf(stderr, "skeleton: window up, audio device %s, preferences on Audio\n", Audio::isOpen() ? "open" : "closed");
+    }
+}
+
+void setCaptureHints(bool prefs, int page) {
+    showPrefs = prefs;
+    prefsPage = page;
+}
+
+bool wantsQuit() { return quit; }
+void requestQuit() { quit = true; }
+
+}

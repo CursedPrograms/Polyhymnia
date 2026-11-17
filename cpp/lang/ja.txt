@@ -1,0 +1,25 @@
+# Polyhymnia - ja (make_packs.py)
+File = ファイル
+Help = ヘルプ
+Quit = 終了
+New = 新規
+Open... = 開く...
+Save = 保存
+Preferences... = 環境設定...
+About Polyhymnia = Polyhymnia について
+SESSION = セッション
+No project open yet. = プロジェクトはまだ開いていません。
+File > New to begin. = 開始するには [ファイル] > [新規]。
+AUDIO = オーディオ
+Audio device open = オーディオデバイス接続
+Could not open the audio device = オーディオデバイスを開けません
+Edit window = 編集ウィンドウ
+Tracks and the timeline arrive in the next phases. = トラックとタイムラインは次の段階で追加されます。
+Preferences = 環境設定
+General = 一般
+Language = 言語
+Audio = オーディオ
+Playback device = 再生デバイス
+(default) = (既定)
+Buffer size (frames) = バッファサイズ (フレーム)
+Apply = 適用

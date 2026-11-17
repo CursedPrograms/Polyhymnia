@@ -1,0 +1,25 @@
+# Polyhymnia - sr (make_packs.py)
+File = Датотека
+Help = Помоћ
+Quit = Излаз
+New = Ново
+Open... = Отвори...
+Save = Сачувај
+Preferences... = Подешавања...
+About Polyhymnia = О програму Polyhymnia
+SESSION = СЕСИЈА
+No project open yet. = Још нема отвореног пројекта.
+File > New to begin. = Датотека > Ново за почетак.
+AUDIO = АУДИО
+Audio device open = Аудио уређај отворен
+Could not open the audio device = Не могу да отворим аудио уређај
+Edit window = Прозор за уређивање
+Tracks and the timeline arrive in the next phases. = Траке стижу у следећим фазама.
+Preferences = Подешавања
+General = Опште
+Language = Језик
+Audio = Аудио
+Playback device = Уређај за репродукцију
+(default) = (подразумевано)
+Buffer size (frames) = Величина бафера (оквири)
+Apply = Примени

@@ -1,0 +1,25 @@
+# Polyhymnia - zh (make_packs.py)
+File = 文件
+Help = 帮助
+Quit = 退出
+New = 新建
+Open... = 打开...
+Save = 保存
+Preferences... = 首选项...
+About Polyhymnia = 关于 Polyhymnia
+SESSION = 工程
+No project open yet. = 尚未打开工程。
+File > New to begin. = 用 文件 > 新建 开始。
+AUDIO = 音频
+Audio device open = 音频设备已打开
+Could not open the audio device = 无法打开音频设备
+Edit window = 编辑窗口
+Tracks and the timeline arrive in the next phases. = 音轨和时间线将在后续阶段加入。
+Preferences = 首选项
+General = 常规
+Language = 语言
+Audio = 音频
+Playback device = 播放设备
+(default) = (默认)
+Buffer size (frames) = 缓冲区大小 (帧)
+Apply = 应用

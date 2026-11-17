@@ -1,0 +1,25 @@
+# Polyhymnia - fr (make_packs.py)
+File = Fichier
+Help = Aide
+Quit = Quitter
+New = Nouveau
+Open... = Ouvrir...
+Save = Enregistrer
+Preferences... = Préférences...
+About Polyhymnia = À propos de Polyhymnia
+SESSION = SESSION
+No project open yet. = Aucun projet ouvert.
+File > New to begin. = Fichier > Nouveau pour commencer.
+AUDIO = AUDIO
+Audio device open = Périphérique audio ouvert
+Could not open the audio device = Périphérique audio impossible
+Edit window = Fenêtre édition
+Tracks and the timeline arrive in the next phases. = Les pistes arrivent ensuite.
+Preferences = Préférences
+General = Général
+Language = Langue
+Audio = Audio
+Playback device = Périphérique de lecture
+(default) = (par défaut)
+Buffer size (frames) = Taille du tampon (trames)
+Apply = Appliquer

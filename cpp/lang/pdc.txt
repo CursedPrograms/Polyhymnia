@@ -1,0 +1,25 @@
+# Polyhymnia - pdc (make_packs.py)
+File = Feil
+Help = Hilf
+Quit = Uffheere
+New = Nei
+Open... = Uffmache...
+Save = Speichere
+Preferences... = Iwwerschtellunge...
+About Polyhymnia = Iwwer Polyhymnia
+SESSION = SITZUNG
+No project open yet. = Noch ken Projekt off.
+File > New to begin. = Feil > Neu zum Aanfange.
+AUDIO = AUDIO
+Audio device open = Audiogerät off
+Could not open the audio device = Konnt Audio nit uffmache
+Edit window = Bearbeitungsfenster
+Tracks and the timeline arrive in the next phases. = Gleise kumme später.
+Preferences = Iwwerschtellunge
+General = Allgemein
+Language = Schprooch
+Audio = Audio
+Playback device = Wiedergabegerät
+(default) = (Schtandard)
+Buffer size (frames) = Puffergrössi (Frames)
+Apply = Anwende

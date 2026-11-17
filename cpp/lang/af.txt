@@ -1,0 +1,25 @@
+# Polyhymnia - af (make_packs.py)
+File = Lêer
+Help = Hulp
+Quit = Verlaat
+New = Nuut
+Open... = Open...
+Save = Stoor
+Preferences... = Voorkeure...
+About Polyhymnia = Oor Polyhymnia
+SESSION = SESSIE
+No project open yet. = Nog geen projek oop nie.
+File > New to begin. = Lêer > Nuut om te begin.
+AUDIO = OUDIO
+Audio device open = Oudiotoestel oop
+Could not open the audio device = Kon nie oudiotoestel oopmaak nie
+Edit window = Wysigingsvenster
+Tracks and the timeline arrive in the next phases. = Snitte kom in volgende fases.
+Preferences = Voorkeure
+General = Algemeen
+Language = Taal
+Audio = Oudio
+Playback device = Speeltoestel
+(default) = (verstek)
+Buffer size (frames) = Buffergrootte (raamwerk)
+Apply = Pas toe

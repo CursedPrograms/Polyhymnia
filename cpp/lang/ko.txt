@@ -1,0 +1,25 @@
+# Polyhymnia - ko (make_packs.py)
+File = 파일
+Help = 도움말
+Quit = 종료
+New = 새로 만들기
+Open... = 열기...
+Save = 저장
+Preferences... = 환경 설정...
+About Polyhymnia = Polyhymnia 정보
+SESSION = 세션
+No project open yet. = 아직 연 프로젝트가 없습니다.
+File > New to begin. = 시작하려면 파일 > 새로 만들기.
+AUDIO = 오디오
+Audio device open = 오디오 장치 열림
+Could not open the audio device = 오디오 장치를 열 수 없음
+Edit window = 편집 창
+Tracks and the timeline arrive in the next phases. = 트랙과 타임라인은 다음 단계에서 옵니다.
+Preferences = 환경 설정
+General = 일반
+Language = 언어
+Audio = 오디오
+Playback device = 재생 장치
+(default) = (기본값)
+Buffer size (frames) = 버퍼 크기(프레임)
+Apply = 적용

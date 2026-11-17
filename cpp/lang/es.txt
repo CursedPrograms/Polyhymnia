@@ -1,0 +1,25 @@
+# Polyhymnia - es (make_packs.py)
+File = Archivo
+Help = Ayuda
+Quit = Salir
+New = Nuevo
+Open... = Abrir...
+Save = Guardar
+Preferences... = Preferencias...
+About Polyhymnia = Acerca de Polyhymnia
+SESSION = SESIÓN
+No project open yet. = Aún no hay proyecto abierto.
+File > New to begin. = Archivo > Nuevo para empezar.
+AUDIO = AUDIO
+Audio device open = Dispositivo de audio abierto
+Could not open the audio device = No se pudo abrir el dispositivo de audio
+Edit window = Ventana de edición
+Tracks and the timeline arrive in the next phases. = Las pistas y la línea de tiempo llegan en las siguientes fases.
+Preferences = Preferencias
+General = General
+Language = Idioma
+Audio = Audio
+Playback device = Dispositivo de reproducción
+(default) = (predeterminado)
+Buffer size (frames) = Tamaño del búfer (fotogramas)
+Apply = Aplicar

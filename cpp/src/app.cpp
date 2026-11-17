@@ -2,6 +2,8 @@
 #include "app.h"
 #include "audio.h"
 #include "lang.h"
+#include "edit.h"
+#include "mix.h"
 #include "playback.h"
 #include "project.h"
 #include "splash.h"
@@ -177,17 +179,10 @@ static void drawLeftPanel() {
     ImGui::EndChild();
 }
 
-static void drawCenter() {
-    ImGui::SameLine();
-    ImGui::BeginChild("edit", ImVec2(0, 0), true);
-    ImGui::TextUnformatted(T("Edit window"));
-    ImGui::Separator();
-    if (hasDoc) {
-        ImGui::Text("%s", T("Timeline view comes in phase 4."));
-        ImGui::Text("%zu %s, %zu %s, %zu %s", doc.tracks.size(), T("tracks"), doc.sources.size(), T("sources"), doc.markers.size(), T("markers"));
-    } else {
-        ImGui::TextDisabled("%s", T("Tracks and the timeline arrive in the next phases."));
-    }
+static void drawEmptyCenter() {
+    ImGui::BeginChild("edit_empty", ImVec2(0, 0), true);
+    ImGui::TextDisabled("%s", T("Tracks and the timeline arrive in the next phases."));
+    ImGui::TextDisabled("%s", T("File > New to begin."));
     ImGui::EndChild();
 }
 
@@ -275,7 +270,11 @@ static void drawTransport() {
 }
 
 void frame() {
-    if (hasDoc) Playback::setDocument(&doc);
+    if (hasDoc) {
+        Playback::setDocument(&doc);
+        const auto plan = Mix::currentPlan();
+        if (plan && !plan->missingNote.empty()) sessionNote = plan->missingNote;
+    }
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu(T("File"))) {
             if (ImGui::MenuItem(T("New"), "Ctrl+N")) newDoc();
@@ -294,11 +293,18 @@ void frame() {
         ImGui::EndMainMenuBar();
     }
     const float transportH = hasDoc ? 48.0f : 0.0f;
+    const float chromeH = ImGui::GetFrameHeight() + transportH;
     ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - ImGui::GetFrameHeight() - transportH));
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - chromeH));
     ImGui::Begin("workspace", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
     drawLeftPanel();
-    drawCenter();
+    ImGui::SameLine();
+    if (hasDoc) {
+        ImGui::BeginChild("edit_main", ImVec2(0, 0), false);
+        Edit::draw(doc, 0);
+        ImGui::EndChild();
+    } else
+        drawEmptyCenter();
     ImGui::End();
     drawPrefs();
     drawAbout();
@@ -337,6 +343,14 @@ void script(const std::string& name) {
         Playback::toggleLoop();
         Playback::play();
         fprintf(stderr, "playback: playing demo, loop %s, %zu tracks\n", Playback::loopEnabled() ? "on" : "off", doc.tracks.size());
+        return;
+    }
+    if (name == "edit") {
+        doc = Session::demo();
+        hasDoc = true;
+        Edit::scriptSetup(doc);
+        Playback::setDocument(&doc);
+        fprintf(stderr, "edit: timeline %zu tracks, zoom ready\n", doc.tracks.size());
     }
 }
 

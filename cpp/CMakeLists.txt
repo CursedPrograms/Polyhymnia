@@ -33,7 +33,7 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 
-set(CORE_SOURCES src/lang.cpp src/splash.cpp src/audio.cpp src/tempo.cpp src/session.cpp src/project.cpp src/mix.cpp src/playback.cpp)
+set(CORE_SOURCES src/lang.cpp src/splash.cpp src/audio.cpp src/tempo.cpp src/session.cpp src/project.cpp src/mix.cpp src/playback.cpp src/edit.cpp)
 set(GUI_SOURCES src/main.cpp src/app.cpp)
 if(WIN32 AND EXISTS ${CMAKE_SOURCE_DIR}/src/app.rc)
     list(APPEND GUI_SOURCES src/app.rc)

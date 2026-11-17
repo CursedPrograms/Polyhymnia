@@ -38,6 +38,9 @@ tracks, clips and waveforms, and a Mix window on the way. Part of
 | 2 | Session model: tracks, clips, markers, tempo and meter, `.polyhymnia` save/load |
 | 3 | Playback and mix: gain, pan, mute, solo, real WAV/FLAC/MP3 decode, offline `--render`, `--audiotest` |
 | 4 | Edit window: bars/beats and min:sec rulers, track lanes, clip waveforms, playhead, zoom and scroll |
+| 5 | Editing: Shuffle/Slip/Spot/Grid modes, Smart/Selector/Grabber/Trim tools, cut/copy/paste/duplicate/separate/heal/consolidate/nudge, clip gain and five fade shapes in the mix, undo/redo |
+
+Spot mode nudges source offset; Shuffle ripples later clips. Grabber is click-to-select (no drag yet). Consolidate extends the selected clip to the edit range—not yet a full bounce-to-file.
 
 ## Minimum requirements
 
@@ -63,9 +66,10 @@ Test hooks (screenshot + log line):
 Polyhymnia.exe --script skeleton --capture shot.bmp
 Polyhymnia.exe --script session --capture shot.bmp
 Polyhymnia.exe --script playback --capture shot.bmp
-Polyhymnia.exe --script edit --capture shot.bmp
+Polyhymnia.exe --script edit --capture build\Release\edit-shot.bmp
+Polyhymnia.exe --script editing --capture build\Release\editing-shot.bmp
 Polyhymnia.exe --audiotest build\Release\
-Polyhymnia.exe --render project.polyhymnia out.wav
+Polyhymnia.exe --render build\Release\tone-test.polyhymnia build\Release\out.wav
 ```
 
 Install shortcuts: `install.bat` beside the built tree (copies to `dist\Polyhymnia`).

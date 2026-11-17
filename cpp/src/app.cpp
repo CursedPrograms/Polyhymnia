@@ -42,14 +42,18 @@ static const ImU32 C_BG = IM_COL32(0x1a, 0x1a, 0x1a, 255), C_PANEL = IM_COL32(0x
 
 static ImVec4 col4(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 
-// Atelier greys and blue; controls read better on the left.
+// Atelier greys and blue everywhere (after Mosaic Mask gui.cpp applyStyle); no default ImGui navy.
 static void applyStyle() {
     ImGuiStyle& s = ImGui::GetStyle();
     s.WindowRounding = 0;
     s.FrameRounding = 2;
     s.GrabRounding = 2;
+    s.PopupRounding = 2;
+    s.ScrollbarRounding = 2;
+    s.TabRounding = 2;
     s.WindowBorderSize = 0;
     s.FrameBorderSize = 0;
+    s.PopupBorderSize = 1;
     s.WindowPadding = ImVec2(12, 10);
     s.FramePadding = ImVec2(7, 4);
     s.ItemSpacing = ImVec2(6, 7);
@@ -58,8 +62,23 @@ static void applyStyle() {
     c[ImGuiCol_TextDisabled] = col4(C_DIM);
     c[ImGuiCol_WindowBg] = col4(C_PANEL);
     c[ImGuiCol_ChildBg] = col4(C_PANEL);
+    c[ImGuiCol_PopupBg] = col4(C_PANEL);
     c[ImGuiCol_Border] = col4(C_LINE);
+    c[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_Separator] = col4(C_LINE);
+    c[ImGuiCol_SeparatorHovered] = col4(C_DEEP);
+    c[ImGuiCol_SeparatorActive] = col4(C_BLUE);
     c[ImGuiCol_FrameBg] = col4(C_WELL);
+    c[ImGuiCol_FrameBgHovered] = col4(IM_COL32(0x2e, 0x2e, 0x2e, 255));
+    c[ImGuiCol_FrameBgActive] = col4(IM_COL32(0x33, 0x33, 0x33, 255));
+    c[ImGuiCol_TitleBg] = col4(C_BG);
+    c[ImGuiCol_TitleBgActive] = col4(C_BG);
+    c[ImGuiCol_TitleBgCollapsed] = col4(C_BG);
+    c[ImGuiCol_MenuBarBg] = col4(C_BG);
+    c[ImGuiCol_ScrollbarBg] = col4(C_PANEL);
+    c[ImGuiCol_ScrollbarGrab] = col4(C_LINE);
+    c[ImGuiCol_ScrollbarGrabHovered] = col4(C_DEEP);
+    c[ImGuiCol_ScrollbarGrabActive] = col4(C_BLUE);
     c[ImGuiCol_CheckMark] = col4(C_BLUE);
     c[ImGuiCol_SliderGrab] = col4(C_BLUE);
     c[ImGuiCol_SliderGrabActive] = col4(C_DEEP);
@@ -69,7 +88,15 @@ static void applyStyle() {
     c[ImGuiCol_Header] = col4(IM_COL32(0x33, 0x33, 0x33, 255));
     c[ImGuiCol_HeaderHovered] = col4(C_DEEP);
     c[ImGuiCol_HeaderActive] = col4(C_BLUE);
-    c[ImGuiCol_MenuBarBg] = col4(C_BG);
+    c[ImGuiCol_Tab] = col4(C_BG);
+    c[ImGuiCol_TabHovered] = col4(C_DEEP);
+    c[ImGuiCol_TabActive] = col4(C_PANEL);
+    c[ImGuiCol_TabUnfocused] = col4(C_BG);
+    c[ImGuiCol_TabUnfocusedActive] = col4(C_PANEL);
+    c[ImGuiCol_ResizeGrip] = col4(C_LINE);
+    c[ImGuiCol_ResizeGripHovered] = col4(C_DEEP);
+    c[ImGuiCol_ResizeGripActive] = col4(C_BLUE);
+    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.45f);
 }
 
 static void loadPrefs() {

@@ -52,6 +52,6 @@ bool writeTestToneWav(const std::string& path, double hz, double seconds, int sa
 bool verifyToneInWav(const std::string& path, double expectHz, double sampleRate, std::string& err);
 
 Peaks peaksForClip(const MixPlan::ClipPlay& clip, int bucketCount);
-const Peaks& cachedPeaks(const std::string& sourceId, const Session::Clip& clip, int buckets);
+const Peaks& peaksForClipPixels(const std::string& sourceId, const Buffer& audio, const Session::Clip& clip, int pixelColumns);
 
 } // namespace Mix

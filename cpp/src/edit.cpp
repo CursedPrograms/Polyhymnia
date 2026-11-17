@@ -30,11 +30,10 @@ static void drawWaveform(ImDrawList* dl, const ImVec2& tl, const ImVec2& br, con
     const float mid = (tl.y + br.y) * 0.5f;
     const int buckets = peaks.buckets;
     for (int b = 0; b < buckets; ++b) {
-        const float x0 = tl.x + w * (float)b / (float)buckets;
-        const float x1 = tl.x + w * (float)(b + 1) / (float)buckets;
+        const float xc = tl.x + w * ((float)b + 0.5f) / (float)buckets;
         const float mn = peaks.minMax[(size_t)b * 2];
         const float mx = peaks.minMax[(size_t)b * 2 + 1];
-        dl->AddLine(ImVec2(x0, mid - mx * h * 0.45f), ImVec2(x1, mid - mn * h * 0.45f), col, 1.0f);
+        dl->AddLine(ImVec2(xc, mid - mx * h * 0.45f), ImVec2(xc, mid - mn * h * 0.45f), col, 1.0f);
     }
 }
 
@@ -103,8 +102,8 @@ void draw(Session::Document& doc, float transportReserve) {
     dl->AddRectFilled(ImVec2(p0.x + kHeaderW, p0.y), ImVec2(p0.x + avail.x, p0.y + contentH), C_WELL);
     drawRulers(dl, ImVec2(p0.x + kHeaderW, p0.y - scrollY), laneW, doc);
     dl->AddText(ImVec2(p0.x + 8, p0.y + 4 - scrollY), C_DIM, T("Tracks"));
-    dl->AddText(ImVec2(p0.x + kHeaderW + 8, p0.y + 4 - scrollY), C_DIM, T("Bars / beats"));
-    dl->AddText(ImVec2(p0.x + kHeaderW + 8, p0.y + kRulerH * 0.5f + 4 - scrollY), C_DIM, T("Min:sec"));
+    dl->AddText(ImVec2(p0.x + 8, p0.y + 14 - scrollY), C_DIM, T("Bars / beats"));
+    dl->AddText(ImVec2(p0.x + 8, p0.y + kRulerH * 0.5f + 10 - scrollY), C_DIM, T("Min:sec"));
 
     const long long visStart = (long long)scrollX;
     for (int ti = 0; ti < (int)doc.tracks.size(); ++ti) {
@@ -126,9 +125,11 @@ void draw(Session::Document& doc, float transportReserve) {
             const float y1 = rowY + kTrackH - 6;
             dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), C_CLIP, 2.0f);
             if (tplay) {
-                for (const auto& cp : tplay->clips)
-                    if (cp.clip.id == clip.id) {
-                        drawWaveform(dl, ImVec2(x0 + 2, y0 + 2), ImVec2(x1 - 2, y1 - 2), cp.peaks, IM_COL32(0xd6, 0xd6, 0xd6, 180));
+                for (const auto& cplay : tplay->clips)
+                    if (cplay.clip.id == clip.id && cplay.audio && cplay.audio->frames > 0) {
+                        const int pxCols = std::max(1, (int)(x1 - x0 - 4.0f));
+                        const Mix::Peaks& pk = Mix::peaksForClipPixels(clip.sourceId, *cplay.audio, clip, pxCols);
+                        drawWaveform(dl, ImVec2(x0 + 2, y0 + 2), ImVec2(x1 - 2, y1 - 2), pk, IM_COL32(0xd6, 0xd6, 0xd6, 200));
                         break;
                     }
             }

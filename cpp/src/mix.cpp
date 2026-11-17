@@ -19,6 +19,7 @@ namespace Mix {
 static std::shared_ptr<const MixPlan> livePlan;
 static std::mutex peakMtx;
 static std::unordered_map<std::string, Peaks> peakCache;
+static std::unordered_map<std::string, Peaks> sourceLodPeaks;
 
 static float dbToLin(float db) { return std::pow(10.0f, db / 20.0f); }
 
@@ -31,29 +32,47 @@ static float fadeGain(const Session::Fade& f, long long posInClip, bool fadeIn) 
     switch (f.shape) {
     case Session::FadeShape::Linear: return fadeIn ? t : 1.0f - t;
     case Session::FadeShape::EqualPower: return fadeIn ? std::sin(t * 1.5707963f) : std::cos(t * 1.5707963f);
-    default: return fadeIn ? t : 1.0f - t;
+    case Session::FadeShape::SCurve: {
+        const float s = t * t * (3.0f - 2.0f * t);
+        return fadeIn ? s : 1.0f - s;
     }
+    case Session::FadeShape::Exponential: {
+        const float k = (std::exp(4.0f) - 1.0f);
+        const float u = (std::exp(t * 4.0f) - 1.0f) / k;
+        return fadeIn ? u : 1.0f - u;
+    }
+    case Session::FadeShape::Logarithmic: {
+        const float denom = std::log1p(std::exp(1.0f) - 1.0f);
+        const float u = std::log1p(t * (std::exp(1.0f) - 1.0f)) / denom;
+        return fadeIn ? u : 1.0f - u;
+    }
+    }
+    return fadeIn ? t : 1.0f - t;
 }
 
-static void resampleStereo(const std::vector<float>& in, int inRate, int inFrames, int outRate, std::vector<float>& out) {
+// Resample decoded PCM with miniaudio's resampler (anti-alias LP on the linear backend).
+static bool resampleStereo(const std::vector<float>& in, int inRate, int inFrames, int outRate, std::vector<float>& out) {
     if (inRate == outRate || inFrames <= 0) {
         out = in;
-        return;
+        return true;
     }
-    const int outFrames = (int)((long long)inFrames * outRate / inRate);
-    out.resize((size_t)outFrames * 2);
-    const double ratio = (double)inRate / (double)outRate;
-    for (int i = 0; i < outFrames; ++i) {
-        const double src = i * ratio;
-        const int i0 = (int)src;
-        const int i1 = std::min(i0 + 1, inFrames - 1);
-        const float frac = (float)(src - i0);
-        for (int ch = 0; ch < 2; ++ch) {
-            const float a = in[(size_t)i0 * 2 + (size_t)ch];
-            const float b = in[(size_t)i1 * 2 + (size_t)ch];
-            out[(size_t)i * 2 + (size_t)ch] = a + (b - a) * frac;
-        }
+    ma_resampler_config cfg = ma_resampler_config_init(ma_format_f32, 2, (ma_uint32)inRate, (ma_uint32)outRate, ma_resample_algorithm_linear);
+    cfg.linear.lpfOrder = 4;
+    ma_resampler resampler;
+    if (ma_resampler_init(&cfg, nullptr, &resampler) != MA_SUCCESS) return false;
+    ma_uint64 outCap = 0;
+    if (ma_resampler_get_expected_output_frame_count(&resampler, (ma_uint64)inFrames, &outCap) != MA_SUCCESS) {
+        ma_resampler_uninit(&resampler, nullptr);
+        return false;
     }
+    out.assign((size_t)outCap * 2, 0.0f);
+    ma_uint64 inCount = (ma_uint64)inFrames;
+    ma_uint64 outCount = outCap;
+    const ma_result pr = ma_resampler_process_pcm_frames(&resampler, in.data(), &inCount, out.data(), &outCount);
+    ma_resampler_uninit(&resampler, nullptr);
+    if (pr != MA_SUCCESS) return false;
+    out.resize((size_t)outCount * 2);
+    return true;
 }
 
 static void fillSine(Buffer& b, double seconds, double hz) {
@@ -135,33 +154,47 @@ static std::shared_ptr<const Buffer> loadSource(const Session::Document& doc, co
     ma_decoder_uninit(&decoder);
     const int inFrames = (int)(raw.size() / 2);
     std::vector<float> stereo;
-    resampleStereo(raw, fileRate, inFrames, out->sampleRate, stereo);
+    if (!resampleStereo(raw, fileRate, inFrames, out->sampleRate, stereo)) {
+        fillSine(*out, 4.0, 440.0);
+        if (missing.empty()) missing = "Resample failed: " + src.path;
+        return out;
+    }
     out->frames = (int)(stereo.size() / 2);
     out->stereo = std::move(stereo);
     out->synthetic = false;
     return out;
 }
 
-Peaks buildPeaks(const Buffer& buf, int buckets) {
+// Min/max peaks over frame ranges (mono-ish mix of L/R).
+static Peaks buildPeaksSpan(const Buffer& buf, int frameStart, int frameEnd, int buckets) {
     Peaks p;
-    if (buf.frames <= 0 || buckets <= 0) return p;
+    if (buckets <= 0 || frameEnd <= frameStart) return p;
     p.buckets = buckets;
     p.minMax.resize((size_t)buckets * 2, 0.0f);
-    const int per = std::max(1, buf.frames / buckets);
+    const int span = frameEnd - frameStart;
+    const int per = std::max(1, span / buckets);
     for (int b = 0; b < buckets; ++b) {
-        const int start = b * per;
-        const int end = std::min(buf.frames, start + per);
+        const int start = frameStart + b * per;
+        const int end = std::min(frameEnd, start + per);
         float mn = 1.0f, mx = -1.0f;
         for (int i = start; i < end; ++i) {
+            if (i < 0 || i >= buf.frames) continue;
             const float s = 0.5f * (buf.stereo[(size_t)i * 2] + buf.stereo[(size_t)i * 2 + 1]);
             mn = std::min(mn, s);
             mx = std::max(mx, s);
         }
-        if (end <= start) { mn = 0; mx = 0; }
+        if (end <= start) {
+            mn = 0;
+            mx = 0;
+        }
         p.minMax[(size_t)b * 2] = mn;
         p.minMax[(size_t)b * 2 + 1] = mx;
     }
     return p;
+}
+
+Peaks buildPeaks(const Buffer& buf, int buckets) {
+    return buildPeaksSpan(buf, 0, buf.frames, buckets);
 }
 
 void clearPlan() { std::atomic_store(&livePlan, std::shared_ptr<const MixPlan>{}); }
@@ -171,8 +204,15 @@ void rebuildPlan(const Session::Document& doc) {
     plan->sampleRate = doc.sampleRate;
     plan->length = sessionLength(doc);
     std::unordered_map<std::string, std::shared_ptr<const Buffer>> loaded;
-    for (const auto& s : doc.sources)
+    for (const auto& s : doc.sources) {
         loaded[s.id] = loadSource(doc, s, plan->missingNote);
+        const auto& buf = loaded[s.id];
+        if (buf && buf->frames > 0 && !buf->synthetic) {
+            std::lock_guard<std::mutex> g(peakMtx);
+            const std::string lodKey = s.id + ":lod4096";
+            if (sourceLodPeaks.find(lodKey) == sourceLodPeaks.end()) sourceLodPeaks[lodKey] = buildPeaks(*buf, 4096);
+        }
+    }
     for (const auto& track : doc.tracks) {
         MixPlan::TrackPlay tp;
         tp.track = track;
@@ -381,21 +421,18 @@ Peaks peaksForClip(const MixPlan::ClipPlay& clip, int bucketCount) {
     return {};
 }
 
-const Peaks& cachedPeaks(const std::string& sourceId, const Session::Clip& clip, int buckets) {
-    const std::string key = sourceId + ":" + clip.id + ":" + std::to_string(buckets);
+const Peaks& peaksForClipPixels(const std::string& sourceId, const Buffer& audio, const Session::Clip& clip, int pixelColumns) {
+    const int cols = std::max(1, pixelColumns);
+    const std::string key = sourceId + ":" + clip.id + ":" + std::to_string(cols) + ":" + std::to_string(clip.offset) + ":"
+                            + std::to_string(clip.length);
     std::lock_guard<std::mutex> g(peakMtx);
     auto& p = peakCache[key];
-    if (p.buckets == 0) {
-        const auto plan = std::atomic_load(&livePlan);
-        if (plan) {
-            for (const auto& t : plan->tracks)
-                for (const auto& c : t.clips)
-                    if (c.clip.id == clip.id && c.clip.sourceId == sourceId) {
-                        p = buildPeaks(*c.audio, buckets);
-                        break;
-                    }
-        }
-    }
+    if (p.buckets != 0) return p;
+    if (audio.frames <= 0) return p;
+    const int off = (int)std::clamp(clip.offset, 0LL, (long long)audio.frames - 1);
+    const int len = (int)std::clamp(clip.length, 0LL, (long long)audio.frames - off);
+    const int end = off + len;
+    p = buildPeaksSpan(audio, off, end, cols);
     return p;
 }
 

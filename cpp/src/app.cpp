@@ -347,6 +347,13 @@ void script(const std::string& name) {
     }
     if (name == "edit") {
         doc = Session::demo();
+        doc.folder = prefDir;
+        std::string err;
+        const std::string adir = prefDir + "audio";
+        std::filesystem::create_directories(adir);
+        const int rate = (int)doc.sampleRate;
+        Mix::writeTestToneWav(adir + "/sine_440.wav", 440.0, 2.0, rate, err);
+        Mix::writeTestToneWav(adir + "/click.wav", 2200.0, 0.08, rate, err);
         hasDoc = true;
         Edit::scriptSetup(doc);
         Playback::setDocument(&doc);

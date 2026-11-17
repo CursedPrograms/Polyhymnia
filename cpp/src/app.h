@@ -15,4 +15,7 @@ void requestQuit();
 void setCaptureHints(bool prefsOpen, int prefsPage);
 const Session::Document& document();
 bool hasSession();
+bool mutateDocument(const std::string& label, const std::function<void(Session::Document&)>& fn);
+bool undoDocument();
+bool redoDocument();
 }

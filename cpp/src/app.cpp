@@ -3,7 +3,9 @@
 #include "audio.h"
 #include "lang.h"
 #include "edit.h"
+#include "editor.h"
 #include "mix.h"
+#include "undo.h"
 #include "playback.h"
 #include "project.h"
 #include "splash.h"
@@ -37,6 +39,7 @@ static Session::Document doc;
 static bool hasDoc = false;
 static std::string docPath;
 static std::string sessionNote;
+static Undo::History hist;
 
 static const ImU32 C_BG = IM_COL32(0x1a, 0x1a, 0x1a, 255), C_PANEL = IM_COL32(0x21, 0x21, 0x21, 255), C_WELL = IM_COL32(0x2a, 0x2a, 0x2a, 255),
                    C_LINE = IM_COL32(0x33, 0x33, 0x33, 255), C_TEXT = IM_COL32(0xd6, 0xd6, 0xd6, 255), C_DIM = IM_COL32(0x9a, 0x9a, 0x9a, 255),
@@ -138,6 +141,8 @@ static void newDoc() {
     hasDoc = true;
     docPath.clear();
     sessionNote.clear();
+    hist.clear();
+    Editor::clearSelection();
 }
 
 static void saveDoc() {
@@ -271,6 +276,12 @@ static void drawTransport() {
 
 void frame() {
     if (hasDoc) {
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
+            if (ImGui::GetIO().KeyShift)
+                redoDocument();
+            else
+                undoDocument();
+        }
         Playback::setDocument(&doc);
         const auto plan = Mix::currentPlan();
         if (plan && !plan->missingNote.empty()) sessionNote = plan->missingNote;
@@ -284,6 +295,25 @@ void frame() {
             if (ImGui::MenuItem(T("Preferences..."))) showPrefs = true;
             ImGui::Separator();
             if (ImGui::MenuItem(T("Quit"), "Alt+F4")) quit = true;
+            ImGui::EndMenu();
+        }
+        if (hasDoc && ImGui::BeginMenu(T("Edit"))) {
+            const auto run = [&](const char* label, auto fn) {
+                if (ImGui::MenuItem(label)) mutateDocument(label, [&](Session::Document& d) { fn(d); });
+            };
+            if (ImGui::MenuItem(T("Undo"), "Ctrl+Z", false, hist.canUndo())) undoDocument();
+            if (ImGui::MenuItem(T("Redo"), "Ctrl+Shift+Z", false, hist.canRedo())) redoDocument();
+            ImGui::Separator();
+            run("Cut", Editor::cut);
+            if (ImGui::MenuItem(T("Copy"))) Editor::copy(doc);
+            run("Paste", [](Session::Document& d) { Editor::paste(d, Playback::playhead(), Editor::selection().trackId); });
+            run("Duplicate", Editor::duplicateSelection);
+            ImGui::Separator();
+            run("Separate", [](Session::Document& d) { Editor::separateAtPlayhead(d, Playback::playhead()); });
+            run("Heal", Editor::healSeparation);
+            run("Consolidate", Editor::consolidateSelection);
+            if (ImGui::MenuItem("Nudge +")) mutateDocument("Nudge", [](Session::Document& d) { Editor::nudgeSelection(d, Editor::gridStepSamples(d) / 4); });
+            if (ImGui::MenuItem("Nudge -")) mutateDocument("Nudge", [](Session::Document& d) { Editor::nudgeSelection(d, -Editor::gridStepSamples(d) / 4); });
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(T("Help"))) {
@@ -301,7 +331,8 @@ void frame() {
     ImGui::SameLine();
     if (hasDoc) {
         ImGui::BeginChild("edit_main", ImVec2(0, 0), false);
-        Edit::draw(doc, 0);
+        Edit::drawToolbar();
+        Edit::draw(doc, 44.0f);
         ImGui::EndChild();
     } else
         drawEmptyCenter();
@@ -345,6 +376,26 @@ void script(const std::string& name) {
         fprintf(stderr, "playback: playing demo, loop %s, %zu tracks\n", Playback::loopEnabled() ? "on" : "off", doc.tracks.size());
         return;
     }
+    if (name == "editing") {
+        doc = Session::demo();
+        doc.folder = prefDir;
+        std::string err;
+        const std::string adir = prefDir + "audio";
+        std::filesystem::create_directories(adir);
+        const int rate = (int)doc.sampleRate;
+        Mix::writeTestToneWav(adir + "/sine_440.wav", 440.0, 2.0, rate, err);
+        Mix::writeTestToneWav(adir + "/click.wav", 2200.0, 0.08, rate, err);
+        hasDoc = true;
+        hist.clear();
+        Editor::setMode(Editor::Mode::Grid);
+        Editor::setTool(Editor::Tool::Smart);
+        mutateDocument("Editing demo", [](Session::Document& d) { Editor::scriptDemo(d); });
+        Edit::scriptSetup(doc);
+        Playback::setDocument(&doc);
+        fprintf(stderr, "editing: modes/tools, separate, fades, clip gain, duplicate (%zu clips on track 1)\n",
+                doc.tracks.empty() ? 0 : doc.tracks[0].clips.size());
+        return;
+    }
     if (name == "edit") {
         doc = Session::demo();
         doc.folder = prefDir;
@@ -371,5 +422,28 @@ void setCaptureHints(bool prefs, int page) {
 
 bool wantsQuit() { return quit; }
 void requestQuit() { quit = true; }
+
+bool mutateDocument(const std::string& label, const std::function<void(Session::Document&)>& fn) {
+    if (!hasDoc) return false;
+    hist.pushBefore(doc, label);
+    fn(doc);
+    ++doc.touch;
+    Playback::setDocument(&doc);
+    return true;
+}
+
+bool undoDocument() {
+    if (!hasDoc || !hist.doUndo(doc)) return false;
+    ++doc.touch;
+    Playback::setDocument(&doc);
+    return true;
+}
+
+bool redoDocument() {
+    if (!hasDoc || !hist.doRedo(doc)) return false;
+    ++doc.touch;
+    Playback::setDocument(&doc);
+    return true;
+}
 
 }

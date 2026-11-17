@@ -33,8 +33,11 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 
-set(CORE_SOURCES src/lang.cpp src/splash.cpp src/audio.cpp src/tempo.cpp src/session.cpp src/project.cpp src/mix.cpp src/playback.cpp src/edit.cpp
-    src/editor.cpp src/undo.cpp)
+set(CORE_SOURCES src/lang.cpp src/splash.cpp src/audio.cpp src/tempo.cpp src/tempo_map.cpp src/timecode.cpp src/time_wide.cpp
+    src/session.cpp src/project.cpp src/mix.cpp src/playback.cpp src/edit.cpp src/edit_drag.cpp src/clip_ops.cpp src/time_grid.cpp src/time_format.cpp
+    src/spot_dialog.cpp src/engine_edit.cpp src/engine_fix.cpp
+    src/consolidate.cpp src/editor.cpp src/undo.cpp src/test_runner.cpp tests/test_time_grid.cpp tests/test_engine_edit.cpp tests/test_clip_model.cpp
+    tests/test_cmd_edit_fix.cpp tests/test_cmd_edit_more.cpp tests/test_cmd_clip.cpp tests/test_cmd_clip_more.cpp)
 set(GUI_SOURCES src/main.cpp src/app.cpp)
 if(WIN32 AND EXISTS ${CMAKE_SOURCE_DIR}/src/app.rc)
     list(APPEND GUI_SOURCES src/app.rc)
@@ -49,6 +52,7 @@ if(TARGET SDL2::SDL2main)
 endif()
 if(MSVC)
     target_compile_options(Polyhymnia PRIVATE /W3 /utf-8 /O2 /D_CRT_SECURE_NO_WARNINGS)
+    target_link_options(Polyhymnia PRIVATE /STACK:33554432)
 else()
     target_link_libraries(Polyhymnia PRIVATE dl pthread)
 endif()

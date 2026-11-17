@@ -53,14 +53,50 @@ would, prints a line, saves a screenshot and quits), and for audio `--render pro
 mix offline so it can be checked (length, peak level, that a known tone comes out where expected). Build, run the
 test, look at the screenshot, then commit.
 
+## Port it properly (this overrides speed)
+
+Polyhymnia is a port of SoundCraft, not something inspired by it. For every feature:
+
+- **Read the original first.** Open the SoundCraft files that do it and port them function by function: the same logic,
+  the same edge cases, the same settings and limits, names in C++ style. Note at each function where it came from:
+  `// after SoundCraft (crates/.../file.rs fn_name)`.
+- **Port its tests too.** Every `#[test]` in the files you port becomes a C++ test (`cpp/tests`, built by CMake and
+  run by `Polyhymnia.exe --selftest`). A feature is done only when the original's tests pass in C++, plus the screenshot
+  check. Run all the tests before every commit; never delete or weaken a test to make it pass.
+- **Nothing simplified.** No placeholders, stubs, "first cut", "simplified" or "not a full ..." versions. If SoundCraft
+  does it, Polyhymnia does it. If something truly can't be ported (a Rust-only dependency, another platform), write why
+  under "Cursor asks" in REVIEW.md and port everything around it.
+- **Say what was ported.** Each commit message names the SoundCraft files and functions it ports and how many of their
+  tests pass (e.g. "edit.rs heal, join_gain_env; 4/4 tests").
+- When a phase is done, compare it with SoundCraft file by file and list anything left in REVIEW.md before moving on.
+
 ## House rules
 
 - Comments say what and why, in plain words. 4-space indents. A short comment on each function.
 - MSVC traps: `near`, `far`, `small`, `min`, `max` are Windows macros (define NOMINMAX; don't use them as names).
 - Don't write `\n` inside C++ string literals through a shell heredoc; edit files directly.
 - Commit each finished step to `main` with a full-sentence message ending in a blank line and
-  `Co-Authored-By: Cursor Agent <noreply@cursor.com>`. There's no GitHub repo yet: don't push, don't create one.
+  `Co-Authored-By: Cursor Agent <noreply@cursor.com>`. Push to GitHub once a phase works
+  (`git push -u origin main`; the repo is https://github.com/CursedPrograms/Polyhymnia). If the remote isn't there yet,
+  commit and carry on; don't create the repo yourself.
 - Don't commit build output (`build/`, `dist/`): add a .gitignore first.
 - Read `REVIEW.md` in this folder before each new step: Claude reviews every commit and writes fixes there. Do
   everything under "Open" first.
 - If you're blocked, write why at the bottom of REVIEW.md under "Cursor asks" and stop.
+- Installer shortcuts (Start Menu, desktop, Linux .desktop Name=) are named "Atelier - <Name>" so the suite sorts together; installing and uninstalling also remove the old plain-named shortcut.
+
+## The repo (once phase 1 works, and kept up to date after each phase)
+
+Make it look like the user's other Atelier repos (copy from `D:\cc\Mosaic-Mask`, `D:\cc\Chimera`, `D:\cc\Arachne`):
+
+- **README.md**: what Polyhymnia is, a screenshot of the window (`images/`), what works so far and what's coming, minimum
+  requirements (a table, as Arachne's), how to build and install, credits (after its Craft original, with its
+  licence), and the Cursed footer: `---`, then centred "© Cursed Entertainment 2026" and the itch.io logo link
+  (`logo-wide-grey.png`, width 250), as in the other READMEs. Never write "our" / "ours".
+- **A GitHub Pages site**: `index.html` at the root, `site/style.css`, `site/site.js` (CSS and JS in their own files,
+  never inline), using the main CSS from the cursedentertainment repo as the others do, solid colours, no gradients
+  or shadows, works on phones, the shared footer (RIFT's `site/footer.*`), a QR code pointing at the page.
+- `.github/FUNDING.yml` (copy KIDA-Robot-v01's) and `link.bf` (the same file as the other repos).
+- **The description and topics**: set them with `gh repo edit CursedPrograms/Polyhymnia --description "..." --add-topic ...`
+  (topics like atelier, cpp, the kind of app, imgui, sdl2, windows) and turn on Pages from main, root
+  (`gh api repos/CursedPrograms/Polyhymnia/pages -X POST -f "source[branch]=main" -f "source[path]=/"`).

@@ -38,8 +38,11 @@ long long gridStepSamples(const Session::Document& doc);
 long long snapSample(long long s, const Session::Document& doc);
 
 void selectClip(const Session::Document& doc, const std::string& trackId, const std::string& clipId);
+void selectClips(const Session::Document& doc, const std::vector<std::string>& clipIds, const std::string& trackId);
+void addClipToSelection(const Session::Document& doc, const std::string& trackId, const std::string& clipId);
 void selectRange(long long start, long long end, const std::string& trackId);
 void clearSelection();
+std::vector<std::string> selectedClipIds(const Session::Document& doc);
 
 bool hasClipboard();
 void clearClipboard();

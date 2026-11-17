@@ -5,6 +5,15 @@
 #include "mix.h"
 #include "project.h"
 #include "splash.h"
+#include "test_runner.h"
+
+void registerTimeGridTests();
+void registerEngineEditTests();
+void registerClipModelTests();
+void registerCmdEditTests();
+void registerCmdEditMoreTests();
+void registerCmdClipTests();
+void registerCmdClipMoreTests();
 
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -17,6 +26,14 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+static bool wantsSelftest() {
+    const char* cmd = GetCommandLineA();
+    return cmd && std::strstr(cmd, "--selftest");
+}
+#endif
 
 static bool fileExists(const char* f) {
     if (FILE* t = fopen(f, "rb")) { fclose(t); return true; }
@@ -103,9 +120,22 @@ static int runAudioTest(const char* outDir) {
     Session::Document doc = Session::empty();
     doc.name = "Tone test";
     doc.sampleRate = rate;
-    doc.sources.push_back({"tone", "test_tone.wav", rate, 2});
-    doc.tracks.push_back({"t1", "Tone", false, false, 0, 0, {}});
-    doc.tracks.back().clips.push_back({"c1", "tone", 0, 0, rate * 2, 0.0f, {}, {}});
+    Session::Source tone;
+    tone.id = "tone";
+    tone.path = "test_tone.wav";
+    tone.sampleRate = rate;
+    tone.channels = 2;
+    tone.frames = (long long)rate * 2;
+    doc.sources.push_back(tone);
+    Session::Track tr;
+    tr.id = "t1";
+    tr.name = "Tone";
+    Session::Clip tc;
+    tc.id = "c1";
+    tc.sourceId = "tone";
+    tc.length = (long long)rate * 2;
+    tr.clips.push_back(tc);
+    doc.tracks.push_back(std::move(tr));
     doc.touch = 1;
     doc.folder = dir;
     if (!Project::save(doc, projectPath, err)) {
@@ -140,9 +170,37 @@ static int runRender(const char* projectPath, const char* outWav) {
 }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    if (wantsSelftest()) {
+        registerEngineEditTests();
+        registerClipModelTests();
+        registerCmdEditTests();
+        registerCmdEditMoreTests();
+        registerCmdClipTests();
+        registerCmdClipMoreTests();
+        registerTimeGridTests(); // after edit+clip so a grid crash does not block engine results
+        return Test::runAll();
+    }
+#endif
     std::string capture, scriptName;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
+        if (a == "--selftest") {
+#ifdef _WIN32
+            AllocConsole();
+            FILE* con = nullptr;
+            freopen_s(&con, "CONOUT$", "w", stderr);
+            freopen_s(&con, "CONOUT$", "w", stdout);
+#endif
+            registerEngineEditTests();
+            registerClipModelTests();
+            registerCmdEditTests();
+            registerCmdEditMoreTests();
+            registerCmdClipTests();
+            registerCmdClipMoreTests();
+            registerTimeGridTests();
+            return Test::runAll();
+        }
         if (a == "--capture" && i + 1 < argc) capture = argv[++i];
         else if (a == "--script" && i + 1 < argc) scriptName = argv[++i];
         else if (a == "--render" && i + 2 < argc) {

@@ -49,6 +49,7 @@ long long sessionLength(const Session::Document& doc);
 bool renderToWav(const Session::Document& doc, const std::string& path, std::string& err);
 
 bool writeTestToneWav(const std::string& path, double hz, double seconds, int sampleRate, std::string& err);
+bool writeMonoPcmWav(const std::string& path, const float* pcm, int frames, int sampleRate, std::string& err);
 bool verifyToneInWav(const std::string& path, double expectHz, double sampleRate, std::string& err);
 
 Peaks peaksForClip(const MixPlan::ClipPlay& clip, int bucketCount);

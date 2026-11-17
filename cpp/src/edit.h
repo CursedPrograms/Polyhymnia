@@ -9,4 +9,5 @@ void drawToolbar();
 void scriptSetup(Session::Document& doc);
 float samplesPerPixel();
 long long sampleAtX(float localX, float headerW);
+void openSpotForScript(Session::Document& doc);
 } // namespace Edit

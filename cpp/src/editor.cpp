@@ -1,11 +1,15 @@
-// Polyhymnia - editing commands on the session model.
+// Polyhymnia - editing commands on the session model (after SoundCraft crates/engine edit + cmd/edit.rs).
 #include "editor.h"
+#include "clip_ops.h"
+#include "consolidate.h"
+#include "engine_edit.h"
+#include "time_grid.h"
 #include "tempo.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
-#include <unordered_map>
 
 namespace Editor {
 
@@ -14,23 +18,63 @@ static Tool gTool = Tool::Smart;
 static bool gSnap = true;
 static Selection gSel;
 static Session::Document gClipboard;
-static uint32_t gIdSeq = 1000;
-
-static std::string nextId(const char* prefix) { return std::string(prefix) + std::to_string(gIdSeq++); }
-
-static Session::Track* trackMut(Session::Document& doc, const std::string& id) { return Session::findTrack(doc, id); }
-
-static Session::Clip* clipMut(Session::Track& t, const std::string& id) {
-    for (auto& c : t.clips)
-        if (c.id == id) return &c;
-    return nullptr;
-}
-
-static void sortClips(Session::Track& t) {
-    std::sort(t.clips.begin(), t.clips.end(), [](const Session::Clip& a, const Session::Clip& b) { return a.start < b.start; });
-}
 
 static void bumpTouch(Session::Document& doc) { ++doc.touch; }
+
+static bool shuffleEdit() { return gMode == Mode::Shuffle; }
+
+static Time::Range selectionRange(const Session::Document& doc) {
+    if (gSel.end > gSel.start) return Time::Range::newRange(gSel.start, gSel.end);
+    if (gSel.clips.empty()) return {};
+    long long lo = std::numeric_limits<long long>::max();
+    long long hi = std::numeric_limits<long long>::min();
+    for (const auto& r : gSel.clips) {
+        const Session::Track* t = Session::findTrack(doc, r.trackId);
+        if (!t) continue;
+        for (const auto& c : t->clips) {
+            if (c.id != r.clipId) continue;
+            lo = std::min(lo, c.start);
+            hi = std::max(hi, ClipOps::end(c));
+        }
+    }
+    if (lo > hi) return {};
+    return Time::Range::newRange(lo, hi);
+}
+
+static std::vector<std::string> tracksInScope(const Session::Document& doc) {
+    if (!gSel.trackId.empty()) return {gSel.trackId};
+    const Time::Range r = selectionRange(doc);
+    if (r.isEmpty()) return {};
+    std::vector<std::string> out;
+    for (const auto& t : doc.tracks) {
+        for (const auto& c : t.clips) {
+            if (ClipOps::range(c).overlaps(r)) {
+                out.push_back(t.id);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+static std::vector<std::string> clipIdsFromSelection(const Session::Document& doc) {
+    if (!gSel.clips.empty()) {
+        std::vector<std::string> ids;
+        ids.reserve(gSel.clips.size());
+        for (const auto& r : gSel.clips) ids.push_back(r.clipId);
+        return ids;
+    }
+    const Time::Range r = selectionRange(doc);
+    if (r.isEmpty()) return {};
+    std::vector<std::string> ids;
+    for (const auto& tid : tracksInScope(doc)) {
+        const Session::Track* t = Session::findTrack(doc, tid);
+        if (!t) continue;
+        for (const auto& c : t->clips)
+            if (ClipOps::range(c).overlaps(r)) ids.push_back(c.id);
+    }
+    return ids;
+}
 
 Mode mode() { return gMode; }
 Tool tool() { return gTool; }
@@ -64,15 +108,49 @@ bool snapToGrid() { return gSnap; }
 void setSnapToGrid(bool on) { gSnap = on; }
 
 long long gridStepSamples(const Session::Document& doc) {
-    const double spb = doc.time.samplesPerBeat(doc.sampleRate);
-    if (gMode == Mode::GridRelative) return std::max(1LL, (long long)(spb / 4.0));
-    return std::max(1LL, (long long)spb);
+    if (gMode == Mode::GridRelative) {
+        const long long step = TimeGrid::stepSamples(doc);
+        return std::max(1LL, step / 4);
+    }
+    return TimeGrid::stepSamples(doc);
 }
 
 long long snapSample(long long s, const Session::Document& doc) {
     if (!gSnap || !(gMode == Mode::Grid || gMode == Mode::GridRelative)) return s;
     const long long step = gridStepSamples(doc);
     return ((s + step / 2) / step) * step;
+}
+
+std::vector<std::string> selectedClipIds(const Session::Document& doc) { return clipIdsFromSelection(doc); }
+
+void selectClips(const Session::Document& doc, const std::vector<std::string>& clipIds, const std::string& trackId) {
+    gSel.trackId = trackId;
+    gSel.clips.clear();
+    gSel.clips.reserve(clipIds.size());
+    for (const auto& id : clipIds) gSel.clips.push_back({trackId, id});
+    gSel.start = std::numeric_limits<long long>::max();
+    gSel.end = std::numeric_limits<long long>::min();
+    for (const auto& id : clipIds) {
+        if (auto fc = Session::findClip(doc, id)) {
+            gSel.start = std::min(gSel.start, fc->second->start);
+            gSel.end = std::max(gSel.end, ClipOps::end(*fc->second));
+        }
+    }
+    if (gSel.start > gSel.end) {
+        gSel.start = 0;
+        gSel.end = 0;
+    }
+}
+
+void addClipToSelection(const Session::Document& doc, const std::string& trackId, const std::string& clipId) {
+    for (const auto& r : gSel.clips)
+        if (r.clipId == clipId) return;
+    gSel.clips.push_back({trackId, clipId});
+    gSel.trackId = trackId;
+    if (auto fc = Session::findClip(doc, clipId)) {
+        gSel.start = std::min(gSel.start == 0 && gSel.end == 0 ? fc->second->start : gSel.start, fc->second->start);
+        gSel.end = std::max(gSel.end, ClipOps::end(*fc->second));
+    }
 }
 
 void selectClip(const Session::Document& doc, const std::string& trackId, const std::string& clipId) {
@@ -85,7 +163,7 @@ void selectClip(const Session::Document& doc, const std::string& trackId, const 
         for (const auto& c : t.clips)
             if (c.id == clipId) {
                 gSel.start = c.start;
-                gSel.end = c.start + c.length;
+                gSel.end = ClipOps::end(c);
                 return;
             }
     }
@@ -98,239 +176,200 @@ void selectRange(long long start, long long end, const std::string& trackId) {
     gSel.clips.clear();
 }
 
-void clearSelection() {
-    gSel = {};
-}
+void clearSelection() { gSel = {}; }
 
 bool hasClipboard() { return !gClipboard.tracks.empty(); }
 void clearClipboard() { gClipboard = Session::empty(); }
 
-static std::vector<Session::Clip> clipsInRange(const Session::Document& doc) {
-    std::vector<Session::Clip> out;
-    for (const auto& t : doc.tracks) {
-        if (!gSel.trackId.empty() && t.id != gSel.trackId) continue;
-        for (const auto& c : t.clips) {
-            const long long c0 = c.start;
-            const long long c1 = c.start + c.length;
-            if (c1 > gSel.start && c0 < gSel.end) out.push_back(c);
-        }
-    }
-    if (!gSel.clips.empty()) {
-        out.clear();
-        for (const auto& r : gSel.clips) {
-            const Session::Track* t = Session::findTrack(doc, r.trackId);
-            if (!t) continue;
-            for (const auto& c : t->clips)
-                if (c.id == r.clipId) out.push_back(c);
-        }
-    }
-    return out;
-}
-
 bool copy(const Session::Document& doc) {
-    auto clips = clipsInRange(doc);
-    if (clips.empty() && gSel.clips.empty()) return false;
-    if (clips.empty()) return false;
+    const Time::Range r = selectionRange(doc);
+    if (r.isEmpty()) return false;
     gClipboard = Session::empty();
     gClipboard.sources = doc.sources;
-    Session::Track tr;
-    tr.id = "clipclip";
-    tr.name = "Clipboard";
-    tr.clips = std::move(clips);
-    const long long base = tr.clips[0].start;
-    for (auto& c : tr.clips) {
-        c.start -= base;
-        c.id = nextId("cb");
+    for (const auto& tid : tracksInScope(doc)) {
+        const auto clips = EngEdit::copyRange(doc, tid, r);
+        if (clips.empty()) continue;
+        Session::Track tr;
+        tr.id = tid;
+        tr.clips = clips;
+        gClipboard.tracks.push_back(std::move(tr));
     }
-    gClipboard.tracks.push_back(std::move(tr));
-    return true;
+    return !gClipboard.tracks.empty();
 }
 
 bool cut(Session::Document& doc) {
     if (!copy(doc)) return false;
-    auto clips = clipsInRange(doc);
-    for (const auto& c : clips) {
-        Session::Track* t = trackMut(doc, gSel.trackId.empty() ? doc.tracks[0].id : gSel.trackId);
-        if (!t) continue;
-        t->clips.erase(std::remove_if(t->clips.begin(), t->clips.end(), [&](const Session::Clip& x) { return x.id == c.id; }), t->clips.end());
-        if (gMode == Mode::Shuffle) {
-            const long long hole = c.length;
-            for (auto& o : t->clips)
-                if (o.start > c.start) o.start -= hole;
-        }
-    }
+    const Time::Range r = selectionRange(doc);
+    const bool sh = shuffleEdit();
+    for (const auto& tid : tracksInScope(doc)) EngEdit::clearRange(doc, tid, r, sh);
     bumpTouch(doc);
     return true;
 }
 
 bool paste(Session::Document& doc, long long at, const std::string& trackId) {
     if (!hasClipboard()) return false;
-    Session::Track* t = trackMut(doc, trackId);
+    Session::Track* t = Session::findTrack(doc, trackId);
     if (!t) return false;
-    const auto& src = gClipboard.tracks[0].clips;
-    const long long pasteAt = snapSample(at, doc);
-    for (const auto& c : src) {
-        Session::Clip n = c;
-        n.id = nextId("c");
-        n.start = pasteAt + c.start;
-        if (gMode == Mode::Shuffle) {
-            const long long need = n.start + n.length;
-            for (auto& o : t->clips)
-                if (o.start >= n.start) o.start += n.length;
-        }
-        t->clips.push_back(n);
+    long long length = 0;
+    for (const auto& tr : gClipboard.tracks) {
+        for (const auto& c : tr.clips) length = std::max(length, ClipOps::end(c));
     }
-    sortClips(*t);
+    const long long pasteAt =
+        (gMode == Mode::Grid || gMode == Mode::GridRelative) ? snapSample(at, doc) : at;
+    const auto& clips = gClipboard.tracks[0].clips;
+    const auto out = EngEdit::paste(doc, trackId, pasteAt, clips, length, shuffleEdit());
+    if (out.error) return false;
+    for (const auto& s : gClipboard.sources) {
+        bool have = false;
+        for (const auto& e : doc.sources)
+            if (e.id == s.id) {
+                have = true;
+                break;
+            }
+        if (!have) doc.sources.push_back(s);
+    }
     bumpTouch(doc);
-    return true;
+    return !out.ids.empty();
 }
 
 bool duplicateSelection(Session::Document& doc) {
     if (!copy(doc)) return false;
-    const long long at = gSel.end > gSel.start ? gSel.end : gSel.start;
-    return paste(doc, at, gSel.trackId.empty() && !doc.tracks.empty() ? doc.tracks[0].id : gSel.trackId);
+    const Time::Range r = selectionRange(doc);
+    const long long at = r.isEmpty() ? gSel.start : r.end;
+    std::string tid = gSel.trackId;
+    if (tid.empty() && !doc.tracks.empty()) tid = doc.tracks[0].id;
+    return paste(doc, at, tid);
 }
 
 bool separateAtPlayhead(Session::Document& doc, long long at) {
-    const long long pos = snapSample(at, doc);
-    int splits = 0;
-    for (auto& t : doc.tracks) {
-        if (!gSel.trackId.empty() && t.id != gSel.trackId) continue;
-        std::vector<Session::Clip> out;
-        for (auto c : t.clips) {
-            if (pos <= c.start || pos >= c.start + c.length) {
-                out.push_back(c);
-                continue;
-            }
-            Session::Clip right = c;
-            right.id = nextId("c");
-            const long long leftLen = pos - c.start;
-            right.offset += leftLen;
-            right.length -= leftLen;
-            right.start = pos;
-            right.fadeIn = {};
-            c.length = leftLen;
-            c.fadeOut = {};
-            out.push_back(c);
-            out.push_back(right);
-            ++splits;
-        }
-        t.clips = std::move(out);
-        sortClips(t);
+    const long long pos = (gMode == Mode::Grid || gMode == Mode::GridRelative) ? snapSample(at, doc) : at;
+    size_t splits = 0;
+    const auto tracks = tracksInScope(doc);
+    if (tracks.empty()) {
+        for (const auto& t : doc.tracks) splits += EngEdit::separateAt(doc, t.id, pos);
+    } else {
+        for (const auto& tid : tracks) splits += EngEdit::separateAt(doc, tid, pos);
     }
     if (splits > 0) bumpTouch(doc);
     return splits > 0;
 }
 
 bool healSeparation(Session::Document& doc) {
-    int healed = 0;
-    for (auto& t : doc.tracks) {
-        sortClips(t);
-        for (size_t i = 0; i + 1 < t.clips.size(); ++i) {
-            Session::Clip& a = t.clips[i];
-            Session::Clip& b = t.clips[i + 1];
-            if (a.sourceId != b.sourceId) continue;
-            if (a.start + a.length != b.start) continue;
-            if (a.fadeOut.len > 0 || b.fadeIn.len > 0) continue;
-            a.length += b.length;
-            a.fadeOut = b.fadeOut;
-            t.clips.erase(t.clips.begin() + (ptrdiff_t)i + 1);
-            ++healed;
-            --i;
-        }
-    }
+    const Time::Range r = selectionRange(doc);
+    if (r.isEmpty()) return false;
+    size_t healed = 0;
+    for (const auto& tid : tracksInScope(doc)) healed += EngEdit::heal(doc, tid, r);
     if (healed > 0) bumpTouch(doc);
     return healed > 0;
 }
 
 bool consolidateSelection(Session::Document& doc) {
-    Session::Track* t = trackMut(doc, gSel.trackId);
-    if (!t || gSel.clips.size() != 1) return false;
-    Session::Clip* c = clipMut(*t, gSel.clips[0].clipId);
-    if (!c) return false;
-    const long long oldLen = c->length;
-    c->length = std::max(c->length, gSel.end - gSel.start);
-    if (c->length != oldLen) bumpTouch(doc);
-    return c->length != oldLen;
+    const Time::Range r = selectionRange(doc);
+    if (r.isEmpty()) return false;
+    bool any = false;
+    std::string err;
+    for (const auto& tid : tracksInScope(doc)) {
+        Session::Track* t = Session::findTrack(doc, tid);
+        if (!t) continue;
+        if (Session::isMidiKind(t->kind)) {
+            if (EngEdit::consolidateMidi(doc, tid, r)) any = true;
+        } else if (Consolidate::track(doc, tid, r, err)) {
+            any = true;
+        }
+    }
+    if (any) bumpTouch(doc);
+    return any;
 }
 
 bool nudgeSelection(Session::Document& doc, long long delta) {
-    if (gSel.clips.empty()) return false;
-    bool moved = false;
-    for (const auto& r : gSel.clips) {
-        Session::Track* t = trackMut(doc, r.trackId);
-        Session::Clip* c = t ? clipMut(*t, r.clipId) : nullptr;
-        if (!c) continue;
-        if (gMode == Mode::Slip || gMode == Mode::Grid || gMode == Mode::GridRelative) {
-            c->start = snapSample(c->start + delta, doc);
-            moved = true;
-        } else if (gMode == Mode::Shuffle) {
-            moved |= moveClip(doc, r.trackId, r.clipId, snapSample(c->start + delta, doc));
-        } else if (gMode == Mode::Spot) {
-            c->offset = std::max(0LL, c->offset + delta);
+    if (delta == 0) return false;
+    const std::vector<std::string> ids = clipIdsFromSelection(doc);
+    if (ids.empty()) return false;
+    if (gMode == Mode::Spot) return false;
+
+    const long long step = delta;
+
+    if (gMode == Mode::Slip) {
+        bool moved = false;
+        for (const auto& id : ids) {
+            auto fc = Session::findClip(doc, id);
+            if (!fc) continue;
+            Session::Clip* c = fc->second;
+            c->offset = std::max(0LL, Time::satAdd(c->offset, step));
             moved = true;
         }
+        if (moved) bumpTouch(doc);
+        return moved;
     }
-    if (moved) bumpTouch(doc);
-    return moved;
-}
 
-static void rippleShuffle(Session::Track& t, const std::string& skipId, long long from, long long delta) {
-    for (auto& c : t.clips) {
-        if (c.id == skipId) continue;
-        if (c.start >= from) c.start += delta;
+    long long effective = step;
+    if (gMode == Mode::Grid || gMode == Mode::GridRelative) {
+        if (const Session::Clip* c = EngEdit::firstMovable(doc, ids))
+            effective = EngEdit::gridDelta(doc, *c, step, gMode == Mode::GridRelative, ids);
     }
+
+    size_t moved = 0;
+    if (gMode == Mode::Shuffle) {
+        const auto out = EngEdit::shuffleClips(doc, ids, effective, {});
+        if (out.error) return false;
+        moved = out.count;
+    } else {
+        moved = EngEdit::moveClips(doc, ids, effective, {});
+    }
+    if (moved > 0) {
+        gSel.start = Time::satAdd(gSel.start, effective);
+        gSel.end = Time::satAdd(gSel.end, effective);
+        if (gSel.start < 0) {
+            const long long fix = -gSel.start;
+            gSel.start += fix;
+            gSel.end += fix;
+        }
+        bumpTouch(doc);
+    }
+    return moved > 0;
 }
 
 bool moveClip(Session::Document& doc, const std::string& trackId, const std::string& clipId, long long newStart) {
-    Session::Track* t = trackMut(doc, trackId);
-    Session::Clip* c = t ? clipMut(*t, clipId) : nullptr;
-    if (!c) return false;
-    const long long target = snapSample(newStart, doc);
-    if (gMode == Mode::Shuffle) {
-        const long long old = c->start;
-        const long long delta = target - old;
-        c->start = target;
-        rippleShuffle(*t, clipId, old + c->length, delta);
-    } else if (gMode == Mode::Spot) {
-        c->start = target;
-    } else {
-        c->start = target;
+    auto fc = Session::findClip(doc, clipId);
+    if (!fc || fc->first != trackId) return false;
+    Session::Clip& c = *fc->second;
+    const long long old = c.start;
+    long long target = newStart;
+    if (gMode == Mode::Grid || gMode == Mode::GridRelative) target = snapSample(newStart, doc);
+    long long delta = target - old;
+    if (gMode == Mode::Grid || gMode == Mode::GridRelative) {
+        const std::vector<std::string> ids = {clipId};
+        delta = EngEdit::gridDelta(doc, c, delta, gMode == Mode::GridRelative, ids);
     }
-    sortClips(*t);
+    if (gMode == Mode::Shuffle) {
+        const auto out = EngEdit::shuffleClips(doc, {clipId}, delta, {});
+        if (out.error || out.count == 0) return false;
+        bumpTouch(doc);
+        return true;
+    }
+    if (EngEdit::moveClips(doc, {clipId}, delta, {}) == 0) return false;
     bumpTouch(doc);
     return true;
 }
 
 bool trimClipStart(Session::Document& doc, const std::string& trackId, const std::string& clipId, long long newStart) {
-    Session::Track* t = trackMut(doc, trackId);
-    Session::Clip* c = t ? clipMut(*t, clipId) : nullptr;
-    if (!c) return false;
-    const long long ns = snapSample(newStart, doc);
-    if (ns <= c->start || ns >= c->start + c->length) return false;
-    const long long delta = ns - c->start;
-    c->offset += delta;
-    c->length -= delta;
-    c->start = ns;
-    if (gMode == Mode::Shuffle) rippleShuffle(*t, clipId, ns, -delta);
+    (void)trackId;
+    const long long ns = (gMode == Mode::Grid || gMode == Mode::GridRelative) ? snapSample(newStart, doc) : newStart;
+    if (!EngEdit::trimClip(doc, clipId, ns, std::nullopt, shuffleEdit())) return false;
     bumpTouch(doc);
     return true;
 }
 
 bool trimClipEnd(Session::Document& doc, const std::string& trackId, const std::string& clipId, long long newEnd) {
-    Session::Track* t = trackMut(doc, trackId);
-    Session::Clip* c = t ? clipMut(*t, clipId) : nullptr;
-    if (!c) return false;
-    const long long ne = snapSample(newEnd, doc);
-    if (ne <= c->start || ne > c->start + c->length) return false;
-    c->length = ne - c->start;
+    (void)trackId;
+    const long long ne = (gMode == Mode::Grid || gMode == Mode::GridRelative) ? snapSample(newEnd, doc) : newEnd;
+    if (!EngEdit::trimClip(doc, clipId, std::nullopt, ne, shuffleEdit())) return false;
     bumpTouch(doc);
     return true;
 }
 
 void setClipGainDb(Session::Document& doc, const std::string& trackId, const std::string& clipId, float gainDb) {
-    Session::Track* t = trackMut(doc, trackId);
-    Session::Clip* c = t ? clipMut(*t, clipId) : nullptr;
+    Session::Clip* c = Session::clipMut(doc, trackId, clipId);
     if (!c) return;
     c->gainDb = gainDb;
     bumpTouch(doc);
@@ -338,8 +377,7 @@ void setClipGainDb(Session::Document& doc, const std::string& trackId, const std
 
 void setClipFade(Session::Document& doc, const std::string& trackId, const std::string& clipId, bool fadeIn, long long len,
                  Session::FadeShape shape) {
-    Session::Track* t = trackMut(doc, trackId);
-    Session::Clip* c = t ? clipMut(*t, clipId) : nullptr;
+    Session::Clip* c = Session::clipMut(doc, trackId, clipId);
     if (!c) return;
     Session::Fade f;
     f.len = std::max(0LL, len);
@@ -353,13 +391,12 @@ void setClipFade(Session::Document& doc, const std::string& trackId, const std::
 
 void applyCrossfadeOverlap(Session::Document& doc, const std::string& trackId, const std::string& clipA, const std::string& clipB,
                            long long overlap) {
-    Session::Track* t = trackMut(doc, trackId);
-    Session::Clip* a = t ? clipMut(*t, clipA) : nullptr;
-    Session::Clip* b = t ? clipMut(*t, clipB) : nullptr;
+    Session::Clip* a = Session::clipMut(doc, trackId, clipA);
+    Session::Clip* b = Session::clipMut(doc, trackId, clipB);
     if (!a || !b || overlap <= 0) return;
-    a->fadeOut = {overlap, Session::FadeShape::EqualPower};
-    b->fadeIn = {overlap, Session::FadeShape::EqualPower};
-    bumpTouch(doc);
+    const long long lo = ClipOps::end(*a) - overlap;
+    const long long hi = b->start + overlap;
+    if (EngEdit::createFades(doc, trackId, Time::Range::newRange(lo, hi), Session::FadeShape::EqualPower) > 0) bumpTouch(doc);
 }
 
 void scriptDemo(Session::Document& doc) {

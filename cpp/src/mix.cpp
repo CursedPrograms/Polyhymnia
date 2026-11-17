@@ -336,6 +336,48 @@ bool renderToWav(const Session::Document& doc, const std::string& path, std::str
     return true;
 }
 
+bool writeMonoPcmWav(const std::string& path, const float* pcm, int frames, int sampleRate, std::string& err) {
+    if (!pcm || frames <= 0 || sampleRate <= 0) {
+        err = "Nothing to write.";
+        return false;
+    }
+    FILE* f = nullptr;
+#ifdef _WIN32
+    fopen_s(&f, path.c_str(), "wb");
+#else
+    f = fopen(path.c_str(), "wb");
+#endif
+    if (!f) {
+        err = "Could not write WAV.";
+        return false;
+    }
+    const int channels = 1;
+    const int bits = 16;
+    const int byteRate = sampleRate * channels * bits / 8;
+    const int dataBytes = frames * channels * (bits / 8);
+    auto w32 = [&](uint32_t v) { fwrite(&v, 4, 1, f); };
+    auto w16 = [&](uint16_t v) { fwrite(&v, 2, 1, f); };
+    fwrite("RIFF", 1, 4, f);
+    w32((uint32_t)(36 + dataBytes));
+    fwrite("WAVEfmt ", 1, 8, f);
+    w32(16);
+    w16(1);
+    w16((uint16_t)channels);
+    w32((uint32_t)sampleRate);
+    w32((uint32_t)byteRate);
+    w16((uint16_t)(channels * bits / 8));
+    w16((uint16_t)bits);
+    fwrite("data", 1, 4, f);
+    w32((uint32_t)dataBytes);
+    for (int i = 0; i < frames; ++i) {
+        float s = std::clamp(pcm[i], -1.0f, 1.0f);
+        const int16_t v = (int16_t)(s * 32767.0f);
+        fwrite(&v, 2, 1, f);
+    }
+    fclose(f);
+    return true;
+}
+
 bool writeTestToneWav(const std::string& path, double hz, double seconds, int sampleRate, std::string& err) {
     Buffer b;
     b.sampleRate = sampleRate;

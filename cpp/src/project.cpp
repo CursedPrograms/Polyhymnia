@@ -58,7 +58,7 @@ bool save(const Session::Document& doc, const std::string& path, std::string& er
     f << "session.meter=" << doc.time.meter.num << "/" << doc.time.meter.den << "\n";
     for (const auto& m : doc.markers) {
         f << "marker." << m.id << ".name=" << m.name << "\n";
-        f << "marker." << m.id << ".at=" << m.at << "\n";
+        f << "marker." << m.id << ".at=" << m.start << "\n";
     }
     for (const auto& s : doc.sources) {
         f << "source." << s.id << ".path=" << relPath(folder, s.path) << "\n";
@@ -78,8 +78,8 @@ bool save(const Session::Document& doc, const std::string& path, std::string& er
             f << p << ".offset=" << c.offset << "\n";
             f << p << ".length=" << c.length << "\n";
             f << p << ".gain_db=" << c.gainDb << "\n";
-            f << p << ".fade_in=" << c.fadeIn.len << "," << shapeId(c.fadeIn.shape) << "\n";
-            f << p << ".fade_out=" << c.fadeOut.len << "," << shapeId(c.fadeOut.shape) << "\n";
+            f << p << ".fade_in=" << c.fadeIn.len << "," << shapeId(c.fadeIn.shape) << "," << c.fadeIn.curvature << "\n";
+            f << p << ".fade_out=" << c.fadeOut.len << "," << shapeId(c.fadeOut.shape) << "," << c.fadeOut.curvature << "\n";
         }
     }
     return true;
@@ -130,16 +130,26 @@ bool load(const std::string& path, Session::Document& doc, std::string& err) {
             auto* m = static_cast<Session::Marker*>(nullptr);
             for (auto& mk : doc.markers)
                 if (mk.id == id) { m = &mk; break; }
-            if (!m) { doc.markers.push_back({id, "", 0}); m = &doc.markers.back(); }
+            if (!m) {
+                doc.markers.push_back({id, "", 0, 0, 1, 0});
+                m = &doc.markers.back();
+            }
             if (field == "name") m->name = val;
-            else if (field == "at") parseLong(val, m->at);
+            else if (field == "at") parseLong(val, m->start);
         } else if (key.rfind("source.", 0) == 0) {
             const size_t dot = key.find('.', 7);
             if (dot == std::string::npos) continue;
             const std::string id = key.substr(7, dot - 7);
             const std::string field = key.substr(dot + 1);
             Session::Source* s = Session::findSource(doc, id);
-            if (!s) { doc.sources.push_back({id, "", 48000, 2}); s = &doc.sources.back(); }
+            if (!s) {
+                Session::Source ns;
+                ns.id = id;
+                ns.sampleRate = 48000;
+                ns.channels = 2;
+                doc.sources.push_back(ns);
+                s = &doc.sources.back();
+            }
             if (field == "path") s->path = val;
             else if (field == "rate") s->sampleRate = std::stoi(val);
             else if (field == "channels") s->channels = std::stoi(val);
@@ -150,7 +160,10 @@ bool load(const std::string& path, Session::Document& doc, std::string& err) {
             const std::string field = key.substr(dot + 1);
             curTrack = Session::findTrack(doc, id);
             if (!curTrack) {
-                doc.tracks.push_back({id, id, false, false, 0, 0, {}});
+                Session::Track tr;
+                tr.id = id;
+                tr.name = id;
+                doc.tracks.push_back(std::move(tr));
                 curTrack = &doc.tracks.back();
             }
             if (field == "name") curTrack->name = val;
@@ -179,11 +192,17 @@ bool load(const std::string& path, Session::Document& doc, std::string& err) {
             else if (field == "length") parseLong(val, curClip.length);
             else if (field == "gain_db") curClip.gainDb = (float)std::stod(val);
             else if (field == "fade_in" || field == "fade_out") {
-                const size_t comma = val.find(',');
+                const size_t c1 = val.find(',');
                 Session::Fade* fd = field == "fade_in" ? &curClip.fadeIn : &curClip.fadeOut;
-                if (comma != std::string::npos) {
-                    parseLong(val.substr(0, comma), fd->len);
-                    parseShape(val.substr(comma + 1), fd->shape);
+                if (c1 != std::string::npos) {
+                    parseLong(val.substr(0, c1), fd->len);
+                    const size_t c2 = val.find(',', c1 + 1);
+                    if (c2 != std::string::npos) {
+                        parseShape(val.substr(c1 + 1, c2 - c1 - 1), fd->shape);
+                        fd->curvature = static_cast<float>(std::stod(val.substr(c2 + 1)));
+                    } else {
+                        parseShape(val.substr(c1 + 1), fd->shape);
+                    }
                 }
             }
         }

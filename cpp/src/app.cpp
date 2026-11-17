@@ -3,6 +3,7 @@
 #include "audio.h"
 #include "lang.h"
 #include "edit.h"
+#include "spot_dialog.h"
 #include "editor.h"
 #include "mix.h"
 #include "undo.h"
@@ -174,7 +175,7 @@ static void drawLeftPanel() {
         for (const auto& t : doc.tracks) ImGui::BulletText("%s (%zu clips)", t.name.c_str(), t.clips.size());
         ImGui::Spacing();
         ImGui::TextUnformatted(T("Markers"));
-        for (const auto& m : doc.markers) ImGui::BulletText("%s @ %lld", m.name.c_str(), (long long)m.at);
+        for (const auto& m : doc.markers) ImGui::BulletText("%s @ %lld", m.name.c_str(), (long long)m.start);
         if (!sessionNote.empty()) ImGui::TextWrapped("%s", sessionNote.c_str());
     }
     ImGui::Spacing();
@@ -339,6 +340,7 @@ void frame() {
     ImGui::End();
     drawPrefs();
     drawAbout();
+    if (hasDoc) Spot::draw(doc);
     drawTransport();
 }
 
@@ -394,6 +396,17 @@ void script(const std::string& name) {
         Playback::setDocument(&doc);
         fprintf(stderr, "editing: modes/tools, separate, fades, clip gain, duplicate (%zu clips on track 1)\n",
                 doc.tracks.empty() ? 0 : doc.tracks[0].clips.size());
+        return;
+    }
+    if (name == "spot_test") {
+        doc = Session::demo();
+        doc.folder = prefDir;
+        hasDoc = true;
+        hist.clear();
+        Edit::scriptSetup(doc);
+        Edit::openSpotForScript(doc);
+        Playback::setDocument(&doc);
+        fprintf(stderr, "spot_test: Spot dialog with start/sync/end fields open\n");
         return;
     }
     if (name == "edit") {

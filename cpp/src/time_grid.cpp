@@ -1,7 +1,8 @@
-// Grid snap and line math (after SoundCraft crates/time/src/grid.rs; session helpers after crates/model/session.rs).
+// Grid snap and line math (after SoundCraft crates/time/src/grid.rs; session helpers after crates/model/src/session.rs).
 #include "time_grid.h"
 #include "clip_ops.h"
 #include "session.h"
+#include "time_range.h"
 
 #include <algorithm>
 #include <cctype>
@@ -16,6 +17,7 @@ namespace TimeGrid {
 namespace {
 
 bool ieqAscii(const char* a, const char* b) {
+    if (!a || !b) return false;
     for (; *a && *b; ++a, ++b)
         if (std::tolower(static_cast<unsigned char>(*a)) != std::tolower(static_cast<unsigned char>(*b))) return false;
     return *a == *b;
@@ -87,8 +89,8 @@ Time::Samples feetSampleLine(FeetFramesValue self, Time::Int128 index, Time::Sam
     int64_t num = 1, den = 1;
     feetFrameRatio(self, num, den);
     const auto fr = Time::frameRational(rate);
-    Time::Int128 frames = index * num - Time::Int128(origin) * den;
-    Time::Int128 samples = frames * static_cast<int64_t>(std::max<uint32_t>(1, sr.hz)) * fr.den;
+    const Time::Int128 frames = index * num - Time::Int128(origin) * den;
+    const Time::Int128 samples = frames * static_cast<int64_t>(std::max<uint32_t>(1, sr.hz)) * fr.den;
     const Time::Int128 divisor = Time::Int128(den) * fr.num;
     if (divisor == Time::Int128(0)) return 0;
     const Time::Int128 halfDiv = divisor / Time::Int128(2);
@@ -103,20 +105,12 @@ Time::Int128 feetLineIndex(FeetFramesValue self, Time::Samples position, Time::S
     feetFrameRatio(self, num, den);
     const auto fr = Time::frameRational(rate);
     const Time::Int128 scale = Time::Int128(std::max<int64_t>(1, static_cast<int64_t>(sr.hz))) * fr.den;
-    Time::Int128 frames = Time::Int128(position) * fr.num + Time::Int128(origin) * scale;
+    const Time::Int128 frames = Time::Int128(position) * fr.num + Time::Int128(origin) * scale;
     const Time::Int128 divisor = scale * num;
     Time::Int128 index = 0;
     if (divisor != Time::Int128(0)) index = Time::Int128::divEuclid(frames * Time::Int128(den), divisor);
     if (feetSampleLine(self, index + Time::Int128(1), sr, rate, origin) <= position) index = index + Time::Int128(1);
     return index;
-}
-
-int64_t divEuclidI64(int64_t a, int64_t b) {
-    if (b <= 0) return 0;
-    int64_t q = a / b;
-    const int64_t r = a % b;
-    if (r < 0) --q;
-    return q;
 }
 
 int64_t noteTicksGrid(NoteValue value, bool dotted, bool triplet, const Time::TempoMap& map, int64_t atTick) {
@@ -133,6 +127,7 @@ double secondsStep(double s, Time::SampleRate sr) {
 
 } // namespace
 
+// after SoundCraft (crates/time/src/grid.rs NoteValue::ticks)
 int64_t noteTicks(NoteValue v) {
     switch (v) {
     case NoteValue::Bar:
@@ -147,6 +142,7 @@ int64_t noteTicks(NoteValue v) {
     return Time::TICKS_PER_QUARTER / 4;
 }
 
+// after SoundCraft (crates/time/src/grid.rs NoteValue::label)
 const char* noteLabel(NoteValue v) {
     switch (v) {
     case NoteValue::Bar: return "1 bar";
@@ -161,6 +157,7 @@ const char* noteLabel(NoteValue v) {
     return "1/16 note";
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridScale::label)
 const char* gridScaleLabel(GridScale s) {
     switch (s) {
     case GridScale::BarsBeats: return "Bars|Beats";
@@ -173,6 +170,7 @@ const char* gridScaleLabel(GridScale s) {
     return "";
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridScale::id)
 const char* gridScaleId(GridScale s) {
     switch (s) {
     case GridScale::BarsBeats: return "bars_beats";
@@ -185,14 +183,19 @@ const char* gridScaleId(GridScale s) {
     return "";
 }
 
-GridScale gridScaleFromId(const char* id) {
+// after SoundCraft (crates/time/src/grid.rs GridScale::from_id)
+std::optional<GridScale> gridScaleFromIdOpt(const char* id) {
+    if (!id) return std::nullopt;
     for (GridScale s : GRID_SCALE_TIME)
         if (std::strcmp(id, gridScaleId(s)) == 0 || ieqAscii(id, gridScaleLabel(s))) return s;
     if (std::strcmp(id, gridScaleId(GridScale::ClipsMarkers)) == 0 || ieqAscii(id, gridScaleLabel(GridScale::ClipsMarkers)))
         return GridScale::ClipsMarkers;
-    return GridScale::BarsBeats;
+    return std::nullopt;
 }
 
+GridScale gridScaleFromId(const char* id) { return gridScaleFromIdOpt(id).value_or(GridScale::BarsBeats); }
+
+// after SoundCraft (crates/time/src/grid.rs TimecodeValue::label)
 const char* timecodeValueLabel(TimecodeValue v) {
     switch (v) {
     case TimecodeValue::Second: return "1 second";
@@ -205,6 +208,7 @@ const char* timecodeValueLabel(TimecodeValue v) {
     return "";
 }
 
+// after SoundCraft (crates/time/src/grid.rs TimecodeValue::id)
 const char* timecodeValueId(TimecodeValue v) {
     switch (v) {
     case TimecodeValue::Second: return "second";
@@ -217,6 +221,15 @@ const char* timecodeValueId(TimecodeValue v) {
     return "";
 }
 
+// after SoundCraft (crates/time/src/grid.rs TimecodeValue::from_id)
+std::optional<TimecodeValue> timecodeValueFromId(const char* id) {
+    if (!id) return std::nullopt;
+    for (TimecodeValue v : TIMECODE_ALL)
+        if (std::strcmp(id, timecodeValueId(v)) == 0 || ieqAscii(id, timecodeValueLabel(v))) return v;
+    return std::nullopt;
+}
+
+// after SoundCraft (crates/time/src/grid.rs FeetFramesValue::label)
 const char* feetFramesValueLabel(FeetFramesValue v) {
     switch (v) {
     case FeetFramesValue::Foot: return "1 foot";
@@ -227,44 +240,50 @@ const char* feetFramesValueLabel(FeetFramesValue v) {
     return "";
 }
 
-// Sub-frame step below one sample clamps to 1; every sample is then its own line (SoundCraft grid.rs at low rates).
-bool feetFramesDenseSampleLines(FeetFramesValue value, Time::SampleRate sr, Time::FrameRate rate) {
-    const double physical = feetFramesValueFrames(value) * Time::samplesPerFrame(rate, sr);
-    const Time::Samples stepped = std::max<Time::Samples>(1, Time::toSamples(physical));
-    return stepped == 1 && physical < 1.0;
+// after SoundCraft (crates/time/src/grid.rs FeetFramesValue::id)
+const char* feetFramesValueId(FeetFramesValue v) {
+    switch (v) {
+    case FeetFramesValue::Foot: return "foot";
+    case FeetFramesValue::Frame: return "frame";
+    case FeetFramesValue::QuarterFrame: return "quarter_frame";
+    case FeetFramesValue::SubFrame: return "subframe";
+    }
+    return "";
 }
 
+// after SoundCraft (crates/time/src/grid.rs FeetFramesValue::from_id)
+std::optional<FeetFramesValue> feetFramesValueFromId(const char* id) {
+    if (!id) return std::nullopt;
+    for (FeetFramesValue v : FEET_FRAMES_ALL)
+        if (std::strcmp(id, feetFramesValueId(v)) == 0 || ieqAscii(id, feetFramesValueLabel(v))) return v;
+    return std::nullopt;
+}
+
+// after SoundCraft (crates/time/src/grid.rs FeetFramesValue::line_at_or_before)
 Time::Samples feetFramesLineAtOrBefore(FeetFramesValue value, Time::Samples position, Time::SampleRate sr, Time::FrameRate rate, int64_t origin) {
-    if (feetFramesDenseSampleLines(value, sr, rate)) return position;
     return feetSampleLine(value, feetLineIndex(value, position, sr, rate, origin), sr, rate, origin);
 }
 
+// after SoundCraft (crates/time/src/grid.rs FeetFramesValue::next_line)
 Time::Samples feetFramesNextLine(FeetFramesValue value, Time::Samples position, Time::SampleRate sr, Time::FrameRate rate, int64_t origin) {
-    if (feetFramesDenseSampleLines(value, sr, rate)) return Time::satAdd(position, 1);
-    const Time::Samples next = feetSampleLine(value, feetLineIndex(value, position, sr, rate, origin) + 1, sr, rate, origin);
-    return std::max(next, position + 1);
+    const Time::Samples next = feetSampleLine(value, feetLineIndex(value, position, sr, rate, origin) + Time::Int128(1), sr, rate, origin);
+    return std::max(next, Time::satAdd(position, 1));
 }
 
+// after SoundCraft (crates/time/src/grid.rs FeetFramesValue::snap)
 Time::Samples feetFramesSnap(FeetFramesValue value, Time::Samples position, Time::SampleRate sr, Time::FrameRate rate, int64_t origin) {
-    if (feetFramesDenseSampleLines(value, sr, rate)) return position;
     const Time::Samples lo = feetFramesLineAtOrBefore(value, position, sr, rate, origin);
     const Time::Samples hi = feetFramesNextLine(value, lo, sr, rate, origin);
-    if (Time::satSub(position, lo) <= Time::satSub(hi, position)) return lo;
+    if (Time::Int128(position) - Time::Int128(lo) <= Time::Int128(hi) - Time::Int128(position)) return lo;
     return hi;
 }
 
+// after SoundCraft (crates/time/src/grid.rs FeetFramesValue::lines)
 std::vector<Time::Samples> feetFramesLines(FeetFramesValue value, Time::Samples start, Time::Samples end, Time::SampleRate sr, Time::FrameRate rate,
-                                            int64_t origin, size_t max) {
-    if (feetFramesDenseSampleLines(value, sr, rate)) {
-        std::vector<Time::Samples> out;
-        for (Time::Samples line = start; line < end && out.size() < max; line = Time::satAdd(line, 1)) {
-            if (line >= start) out.push_back(line);
-        }
-        return out;
-    }
+                                           int64_t origin, size_t max) {
     std::vector<Time::Samples> out;
     Time::Samples line = feetFramesLineAtOrBefore(value, start, sr, rate, origin);
-    for (size_t guard = 0; line < end && out.size() < max && guard < max + 8; ++guard) {
+    while (line < end && out.size() < max) {
         if (line >= start) out.push_back(line);
         const Time::Samples next = feetFramesNextLine(value, line, sr, rate, origin);
         if (next <= line) break;
@@ -275,6 +294,7 @@ std::vector<Time::Samples> feetFramesLines(FeetFramesValue value, Time::Samples 
 
 GridValue GridValue::defaultGrid() { return note(NoteValue::Sixteenth, false, false); }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::for_scale)
 GridValue GridValue::forScale(GridScale scale) {
     switch (scale) {
     case GridScale::BarsBeats:
@@ -340,6 +360,7 @@ bool GridValue::operator==(const GridValue& o) const {
     return true;
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::label)
 std::string GridValue::label() const {
     switch (kind) {
     case Kind::Note: {
@@ -359,6 +380,7 @@ std::string GridValue::label() const {
     return {};
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::scale)
 GridScale GridValue::scale() const {
     switch (kind) {
     case Kind::Note: return GridScale::BarsBeats;
@@ -371,6 +393,7 @@ GridScale GridValue::scale() const {
     return GridScale::BarsBeats;
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::stepped)
 GridValue GridValue::stepped(bool larger) const {
     GridValue out = *this;
     switch (kind) {
@@ -415,14 +438,15 @@ GridValue GridValue::stepped(bool larger) const {
     return *this;
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::step_samples)
 Time::Samples GridValue::stepSamples(Time::Samples at, Time::SampleRate sr, const Time::TempoMap& map, Time::FrameRate rate) const {
     switch (kind) {
     case Kind::Note: {
         const int64_t t0 = map.samplesToTicks(at, sr);
         const int64_t dt = noteTicksGrid(noteVal, dotted, triplet, map, t0);
         const Time::Samples a = map.tickToSamples(t0, sr);
-        const Time::Samples b = map.tickToSamples(std::max<int64_t>(0, t0 + dt), sr);
-        return std::max<Time::Samples>(1, b - a);
+        const Time::Samples b = map.tickToSamples(Time::satAdd(t0, dt), sr);
+        return std::max<Time::Samples>(1, Time::satSub(b, a));
     }
     case Kind::Seconds: return std::max<Time::Samples>(1, sr.samples(std::clamp(secondsVal, 0.00001, 3600.0)));
     case Kind::Frames: return std::max<Time::Samples>(1, Time::toSamples(Time::samplesPerFrame(rate, sr) * std::clamp<int64_t>(framesVal, 1, 1000000)));
@@ -435,21 +459,16 @@ Time::Samples GridValue::stepSamples(Time::Samples at, Time::SampleRate sr, cons
     return 1;
 }
 
-// after SoundCraft (crates/time/src/grid.rs GridValue::drop_second_frame index.unsigned_abs)
-static uint64_t secondsUnsignedAbs(int64_t index) {
-    if (index == std::numeric_limits<int64_t>::min()) return static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1ULL;
-    return index < 0 ? static_cast<uint64_t>(-index) : static_cast<uint64_t>(index);
-}
-
+// after SoundCraft (crates/time/src/grid.rs GridValue::drop_second_frame)
 int64_t GridValue::dropSecondFrame(int64_t index, Time::FrameRate rate) {
-    const uint64_t seconds = secondsUnsignedAbs(index);
+    const uint64_t seconds = Time::unsignedAbsI64(index);
     const uint64_t totalMinutes = seconds / 60;
     const int64_t nominal = Time::frameNominal(rate);
     int64_t dropFrames = 0;
     if (seconds % 60 == 0 && totalMinutes % 10 != 0) dropFrames = nominal >= 60 ? 4 : 2;
     Time::Timecode tc;
     tc.negative = index < 0;
-    tc.hours = static_cast<int64_t>(seconds / 3600);
+    tc.hours = static_cast<int64_t>(std::min<uint64_t>(seconds / 3600, static_cast<uint64_t>(std::numeric_limits<int64_t>::max())));
     tc.minutes = static_cast<int64_t>((seconds / 60) % 60);
     tc.seconds = static_cast<int64_t>(seconds % 60);
     tc.frames = dropFrames;
@@ -471,6 +490,7 @@ bool gridFrameStep(const GridValue& g, Time::FrameRate rate, double& out) {
     }
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::abs_line)
 Time::Samples GridValue::absLine(int64_t k, Time::SampleRate sr, Time::FrameRate rate) const {
     if (kind == Kind::FeetFrames) return feetSampleLine(feetFramesVal, Time::Int128(k), sr, rate, 0);
     if (kind == Kind::Timecode && timecodeVal == TimecodeValue::Second && Time::frameIsDrop(rate))
@@ -479,27 +499,24 @@ Time::Samples GridValue::absLine(int64_t k, Time::SampleRate sr, Time::FrameRate
     const bool hasFrame = gridFrameStep(*this, rate, frames);
     if (hasFrame) {
         const double whole = std::round(frames);
-        if (frames == whole) return Time::samplesAtFrame(rate, std::max<int64_t>(0, k) * static_cast<int64_t>(whole), sr);
+        if (frames == whole) return Time::samplesAtFrame(rate, Time::satMul(k, static_cast<int64_t>(whole)), sr);
         const double step = std::max(1.0, Time::samplesPerFrame(rate, sr) * frames);
         return Time::toSamples(static_cast<double>(k) * step);
     }
     switch (kind) {
     case Kind::Seconds: return Time::toSamples(static_cast<double>(k) * secondsStep(secondsVal, sr));
-    case Kind::Samples: return std::max<int64_t>(0, k) * std::max<int64_t>(1, samplesVal);
+    case Kind::Samples: return Time::satMul(k, std::max<int64_t>(1, samplesVal));
     default: return 0;
     }
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::abs_index_at_or_before)
 int64_t GridValue::absIndexAtOrBefore(Time::Samples pos, Time::SampleRate sr, Time::FrameRate rate) const {
     if (kind == Kind::Timecode && timecodeVal == TimecodeValue::Second && Time::frameIsDrop(rate)) {
         const Time::Timecode tc = Time::Timecode::fromFrames(Time::framesAt(rate, pos, sr), rate);
         int64_t magnitude = tc.hours;
         magnitude = Time::satAdd(Time::satMul(magnitude, 3600), Time::satAdd(Time::satMul(tc.minutes, 60), tc.seconds));
-        // after SoundCraft magnitude.saturating_neg (not 0 - magnitude; MIN negates to MAX)
-        int64_t k = tc.negative ? (magnitude == std::numeric_limits<int64_t>::min()
-                                        ? std::numeric_limits<int64_t>::max()
-                                        : -magnitude)
-                                  : magnitude;
+        int64_t k = tc.negative ? Time::satNeg(magnitude) : magnitude;
         while (absLine(k, sr, rate) > pos) {
             const int64_t previous = Time::satSub(k, 1);
             if (previous == k) break;
@@ -517,64 +534,72 @@ int64_t GridValue::absIndexAtOrBefore(Time::Samples pos, Time::SampleRate sr, Ti
     int64_t k = 0;
     if (hasFrame) {
         const double step = std::max(1.0, Time::samplesPerFrame(rate, sr) * frames);
-        k = static_cast<int64_t>(std::floor(static_cast<double>(pos) / step));
+        k = Time::toSamples(std::floor(static_cast<double>(pos) / step));
     } else {
         switch (kind) {
         case Kind::Seconds:
-            k = static_cast<int64_t>(std::floor(static_cast<double>(pos) / secondsStep(secondsVal, sr)));
+            k = Time::toSamples(std::floor(static_cast<double>(pos) / secondsStep(secondsVal, sr)));
             break;
         case Kind::Samples: {
             const int64_t step = std::max<int64_t>(1, samplesVal);
-            return pos / step;
+            return Time::divEuclidI64(pos, step);
         }
         default: return 0;
         }
     }
-    if (absLine(k, sr, rate) > pos) k = std::max<int64_t>(std::numeric_limits<int64_t>::min(), k - 1);
-    else if (absLine(k + 1, sr, rate) <= pos) k = k + 1;
+    if (absLine(k, sr, rate) > pos)
+        k = Time::satSub(k, 1);
+    else if (absLine(Time::satAdd(k, 1), sr, rate) <= pos)
+        k = Time::satAdd(k, 1);
     return k;
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::line_at_or_before)
 Time::Samples GridValue::lineAtOrBefore(Time::Samples pos, Time::SampleRate sr, const Time::TempoMap& map, Time::FrameRate rate) const {
     if (kind == Kind::FeetFrames) return feetFramesLineAtOrBefore(feetFramesVal, pos, sr, rate, 0);
     if (kind == Kind::Note) {
-        int64_t t = static_cast<int64_t>(std::floor(map.samplesToTicksF(pos, sr)));
-        if (map.tickToSamples(t, sr) > pos) t = std::max<int64_t>(0, t - 1);
-        else if (map.tickToSamples(t + 1, sr) <= pos) t = t + 1;
+        int64_t t = Time::toSamples(std::floor(map.samplesToTicksF(pos, sr)));
+        if (map.tickToSamples(t, sr) > pos)
+            t = Time::satSub(t, 1);
+        else if (map.tickToSamples(Time::satAdd(t, 1), sr) <= pos)
+            t = Time::satAdd(t, 1);
         const Time::BarBeat bb = map.barBeatAtTick(t);
         const int64_t barTick = map.barStartTick(bb.bar);
         const int64_t origin = noteVal == NoteValue::Whole ? 0 : barTick;
         const int64_t step = noteTicksGrid(noteVal, dotted, triplet, map, origin);
-        const int64_t k = divEuclidI64(t - origin, step);
-        return map.tickToSamples(origin + k * step, sr);
+        const int64_t k = Time::divEuclidI64(Time::satSub(t, origin), step);
+        return map.tickToSamples(Time::satAdd(origin, Time::satMul(k, step)), sr);
     }
     return absLine(absIndexAtOrBefore(pos, sr, rate), sr, rate);
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::next_line)
 Time::Samples GridValue::nextLine(Time::Samples line, Time::SampleRate sr, const Time::TempoMap& map, Time::FrameRate rate) const {
     if (kind == Kind::FeetFrames) return feetFramesNextLine(feetFramesVal, line, sr, rate, 0);
     if (kind != Kind::Note) {
-        const Time::Samples next = absLine(absIndexAtOrBefore(line, sr, rate) + 1, sr, rate);
-        return next > line ? next : line + 1;
+        const Time::Samples next = absLine(Time::satAdd(absIndexAtOrBefore(line, sr, rate), 1), sr, rate);
+        return next > line ? next : Time::satAdd(line, 1);
     }
     const Time::Samples step = stepSamples(line, sr, map, rate);
-    const Time::Samples candidate = lineAtOrBefore(line + step, sr, map, rate);
-    return candidate > line ? candidate : line + step;
+    const Time::Samples candidate = lineAtOrBefore(Time::satAdd(line, step), sr, map, rate);
+    return candidate > line ? candidate : Time::satAdd(line, step);
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::snap)
 Time::Samples GridValue::snap(Time::Samples pos, Time::SampleRate sr, const Time::TempoMap& map, Time::FrameRate rate) const {
     if (kind == Kind::FeetFrames) return feetFramesSnap(feetFramesVal, pos, sr, rate, 0);
     const Time::Samples lo = lineAtOrBefore(pos, sr, map, rate);
     const Time::Samples hi = nextLine(lo, sr, map, rate);
-    return (pos - lo) <= (hi - pos) ? lo : hi;
+    return (Time::Int128(pos) - Time::Int128(lo) <= Time::Int128(hi) - Time::Int128(pos)) ? lo : hi;
 }
 
+// after SoundCraft (crates/time/src/grid.rs GridValue::lines)
 std::vector<Time::Samples> GridValue::lines(Time::Samples start, Time::Samples end, Time::SampleRate sr, const Time::TempoMap& map,
-                                              Time::FrameRate rate, size_t max) const {
+                                            Time::FrameRate rate, size_t max) const {
     if (kind == Kind::FeetFrames) return feetFramesLines(feetFramesVal, start, end, sr, rate, 0, max);
     std::vector<Time::Samples> out;
     Time::Samples p = lineAtOrBefore(start, sr, map, rate);
-    for (size_t guard = 0; p < end && out.size() < max && guard < max + 8; ++guard) {
+    while (p < end && out.size() < max) {
         if (p >= start) out.push_back(p);
         const Time::Samples n = nextLine(p, sr, map, rate);
         if (n <= p) break;
@@ -583,28 +608,33 @@ std::vector<Time::Samples> GridValue::lines(Time::Samples start, Time::Samples e
     return out;
 }
 
-Time::TempoMap tempoMapFromSession(const Session::Document& doc) { return Time::TempoMap::make(doc.time.tempoBpm, doc.time.meter.num, doc.time.meter.den); }
+Time::TempoMap tempoMapFromSession(const Session::Document& doc) { return doc.time.toTempoMap(); }
 
 Time::SampleRate sampleRateFromSession(const Session::Document& doc) { return Time::SampleRate::fromHz(static_cast<uint32_t>(doc.sampleRate)); }
 
+// after SoundCraft (crates/model/src/session.rs Session::clip_marker_grid_points)
 static std::vector<long long> clipMarkerPoints(const Session::Document& doc, const std::vector<std::string>& excluded, bool includeZero) {
     std::unordered_set<std::string> ex(excluded.begin(), excluded.end());
     std::vector<long long> points;
     if (includeZero) points.push_back(0);
     for (const auto& track : doc.tracks) {
         if (!Session::trackShown(doc, track)) continue;
-        for (const auto& clip : track.clips) {
+        for (const auto& clip : track.activeClips()) {
             if (ex.count(clip.id)) continue;
             points.push_back(clip.start);
             points.push_back(ClipOps::end(clip));
         }
     }
-    for (const auto& m : doc.markers) points.push_back(m.start);
+    for (const auto& m : doc.markers) {
+        points.push_back(m.start);
+        if (m.end != m.start) points.push_back(m.end);
+    }
     std::sort(points.begin(), points.end());
     points.erase(std::unique(points.begin(), points.end()), points.end());
     return points;
 }
 
+// after SoundCraft (crates/model/src/session.rs Session::grid_origin)
 static Time::Samples gridOrigin(const Session::Document& doc) {
     if (doc.edit.grid.scale() == GridScale::Timecode) return doc.timecodeStart;
     return 0;
@@ -614,6 +644,41 @@ long long stepSamples(const Session::Document& doc) {
     return doc.edit.grid.stepSamples(0, sampleRateFromSession(doc), tempoMapFromSession(doc), doc.frameRate);
 }
 
+// after SoundCraft (crates/model/src/session.rs Session::grid_lines)
+std::vector<long long> gridLines(const Session::Document& doc, long long start, long long end, size_t max) {
+    if (max == 0 || end <= start) return {};
+    if (doc.edit.gridClipsMarkers) {
+        std::vector<long long> points;
+        for (long long p : clipMarkerPoints(doc, {}, true)) {
+            if (p >= start && p < end) points.push_back(p);
+        }
+        if (points.size() <= max) return points;
+        const Time::Int128 span = Time::Int128(end) - Time::Int128(start);
+        const Time::Int128 buckets = Time::Int128::fromU64(static_cast<uint64_t>(max));
+        std::vector<long long> lines;
+        lines.reserve(max);
+        Time::Int128 lastBucket = Time::Int128(-1);
+        for (long long point : points) {
+            const Time::Int128 bucket = ((Time::Int128(point) - Time::Int128(start)) * buckets) / span;
+            if (bucket != lastBucket) {
+                lines.push_back(point);
+                lastBucket = bucket;
+                if (lines.size() == max) break;
+            }
+        }
+        return lines;
+    }
+    const auto sr = sampleRateFromSession(doc);
+    const auto map = tempoMapFromSession(doc);
+    if (doc.edit.grid.kind == GridValue::Kind::FeetFrames)
+        return feetFramesLines(doc.edit.grid.feetFramesVal, start, end, sr, doc.frameRate, doc.feetFramesStart, max);
+    const Time::Samples origin = gridOrigin(doc);
+    auto out = doc.edit.grid.lines(Time::satAdd(start, origin), Time::satAdd(end, origin), sr, map, doc.frameRate, max);
+    for (auto& line : out) line = Time::satSub(line, origin);
+    return out;
+}
+
+// after SoundCraft (crates/model/src/session.rs Session::grid_line_at_or_before_excluding)
 long long gridLineAtOrBeforeExcluding(const Session::Document& doc, long long position, const std::vector<std::string>& excluded) {
     if (doc.edit.gridClipsMarkers) {
         long long best = position;
@@ -628,30 +693,32 @@ long long gridLineAtOrBeforeExcluding(const Session::Document& doc, long long po
     }
     const auto sr = sampleRateFromSession(doc);
     const auto map = tempoMapFromSession(doc);
-  if (doc.edit.grid.kind == GridValue::Kind::FeetFrames)
+    if (doc.edit.grid.kind == GridValue::Kind::FeetFrames)
         return feetFramesLineAtOrBefore(doc.edit.grid.feetFramesVal, position, sr, doc.frameRate, doc.feetFramesStart);
     const Time::Samples origin = gridOrigin(doc);
-    return doc.edit.grid.lineAtOrBefore(position + origin, sr, map, doc.frameRate) - origin;
+    return Time::satSub(doc.edit.grid.lineAtOrBefore(Time::satAdd(position, origin), sr, map, doc.frameRate), origin);
 }
 
+// after SoundCraft (crates/model/src/session.rs Session::snap_to_grid_excluding)
 long long snapToGridExcluding(const Session::Document& doc, long long position, const std::vector<std::string>& excluded) {
     if (doc.edit.gridClipsMarkers) {
-        const auto pts = clipMarkerPoints(doc, excluded, true);
+        auto pts = clipMarkerPoints(doc, excluded, false);
         if (pts.empty()) return position;
+        if (pts.front() != 0) pts.insert(pts.begin(), 0);
         const auto it = std::lower_bound(pts.begin(), pts.end(), position);
         long long before = pts.front();
         long long after = pts.back();
         if (it != pts.begin()) before = *std::prev(it);
         if (it != pts.end()) after = *it;
         if (it == pts.begin()) after = *it;
-        return (position - before <= after - position) ? before : after;
+        return (Time::satSub(position, before) <= Time::satSub(after, position)) ? before : after;
     }
     const auto sr = sampleRateFromSession(doc);
     const auto map = tempoMapFromSession(doc);
     if (doc.edit.grid.kind == GridValue::Kind::FeetFrames)
         return feetFramesSnap(doc.edit.grid.feetFramesVal, position, sr, doc.frameRate, doc.feetFramesStart);
     const Time::Samples origin = gridOrigin(doc);
-    return doc.edit.grid.snap(position + origin, sr, map, doc.frameRate) - origin;
+    return Time::satSub(doc.edit.grid.snap(Time::satAdd(position, origin), sr, map, doc.frameRate), origin);
 }
 
 } // namespace TimeGrid

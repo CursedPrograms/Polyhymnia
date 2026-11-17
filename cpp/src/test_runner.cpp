@@ -3,6 +3,7 @@
 #include <cstring>
 
 #ifdef _WIN32
+#include <io.h>
 #include <windows.h>
 #endif
 
@@ -17,9 +18,13 @@ void add(const char* name, Fn fn) { registry().emplace_back(name, fn); }
 
 int runAll() {
 #ifdef _WIN32
-    if (AttachConsole(ATTACH_PARENT_PROCESS) != 0 || GetLastError() == ERROR_ACCESS_DENIED) {
-        (void)freopen("CONOUT$", "w", stderr);
-        (void)freopen("CONOUT$", "w", stdout);
+    const HANDLE stdOutH = GetStdHandle(STD_OUTPUT_HANDLE);
+    const bool hasRedirectedOut = (stdOutH != nullptr && stdOutH != INVALID_HANDLE_VALUE && GetFileType(stdOutH) != FILE_TYPE_UNKNOWN);
+    if (!hasRedirectedOut) {
+        if (AttachConsole(ATTACH_PARENT_PROCESS) != 0 || GetLastError() == ERROR_ACCESS_DENIED) {
+            (void)freopen("CONOUT$", "w", stderr);
+            (void)freopen("CONOUT$", "w", stdout);
+        }
     }
 #endif
     const char* logPath = "selftest.log";
@@ -43,16 +48,16 @@ int runAll() {
     }
     int failed = 0;
     for (const auto& item : registry()) {
-        std::fprintf(stderr, "test %s ... ", item.first.c_str());
+        std::fprintf(stdout, "test %s ... ", item.first.c_str());
         if (log) std::fprintf(log, "test %s ... ", item.first.c_str());
         if (item.second()) {
-            std::fprintf(stderr, "ok\n");
+            std::fprintf(stdout, "ok\n");
             if (log) {
                 std::fprintf(log, "ok\n");
                 std::fflush(log);
             }
         } else {
-            std::fprintf(stderr, "FAIL\n");
+            std::fprintf(stdout, "FAIL\n");
             if (log) {
                 std::fprintf(log, "FAIL\n");
                 std::fflush(log);
@@ -60,7 +65,8 @@ int runAll() {
             ++failed;
         }
     }
-    std::fprintf(stderr, "%zu tests, %d failed\n", registry().size(), failed);
+    std::fprintf(stdout, "%zu tests, %d failed\n", registry().size(), failed);
+    std::fflush(stdout);
     if (log) {
         std::fprintf(log, "%zu tests, %d failed\n", registry().size(), failed);
         std::fclose(log);

@@ -24,13 +24,11 @@ static void mulU64(uint64_t a, uint64_t b, uint64_t& lo, uint64_t& hi) {
 Int128& Int128::operator+=(const Int128& o) {
     const uint64_t oldLo = lo;
     lo += o.lo;
-    hi += o.hi;
-    if (lo < oldLo) ++hi;
+    hi = static_cast<int64_t>(static_cast<uint64_t>(hi) + static_cast<uint64_t>(o.hi) + (lo < oldLo ? 1ULL : 0ULL));
     return *this;
 }
 
 Int128 Int128::operator*(int64_t m) const {
-    // after SoundCraft i128 × i64 (full width; do not multiply lo alone when hi ≠ 0)
     return *this * Int128(m);
 }
 
@@ -56,7 +54,7 @@ static Int128 fromAbsU128(uint64_t ulo, uint64_t uhi, bool neg) {
     return Int128::fromParts(nlo, static_cast<int64_t>(nhi));
 }
 
-// Full 128×128 multiply (after Rust i128::wrapping_mul; no recursion).
+// Full 128x128 multiply (after Rust i128::wrapping_mul).
 Int128 Int128::operator*(const Int128& o) const {
     const bool neg = negative() != o.negative();
     uint64_t alo = 0, ahi = 0, blo = 0, bhi = 0;
@@ -77,47 +75,41 @@ Int128 Int128::operator*(const Int128& o) const {
     return fromAbsU128(ulo, uhi, neg);
 }
 
-void Int128::udiv128(uint64_t nlo, uint64_t nhi, uint64_t d, uint64_t* qlo, uint64_t* qhi, uint64_t* r) {
-    if (d == 0) {
-        *qlo = *qhi = 0;
-        *r = 0;
+// Full 128-bit by 128-bit unsigned division and remainder with carry tracking so rem never overflows.
+void Int128::udiv128Full(uint64_t nlo, uint64_t nhi, uint64_t dlo, uint64_t dhi,
+                         uint64_t* qlo, uint64_t* qhi, uint64_t* rlo, uint64_t* rhi) {
+    if (dlo == 0 && dhi == 0) {
+        *qlo = *qhi = *rlo = *rhi = 0;
         return;
     }
-    if (nhi == 0) {
-        *qlo = nlo / d;
+    if (nhi == 0 && dhi == 0) {
+        *qlo = nlo / dlo;
         *qhi = 0;
-        *r = nlo % d;
+        *rlo = nlo % dlo;
+        *rhi = 0;
         return;
     }
-    uint64_t rem = 0, qHiVal = 0, qLoVal = 0;
-    for (int i = 63; i >= 0; --i) {
-        const uint64_t bit = (nhi >> i) & 1;
-        rem = (rem << 1) | bit;
-        qHiVal = (qHiVal << 1) | (rem >= d ? 1 : 0);
-        if (rem >= d) rem -= d;
-    }
-    for (int i = 63; i >= 0; --i) {
-        const uint64_t bit = (nlo >> i) & 1;
-        rem = (rem << 1) | bit;
-        qLoVal = (qLoVal << 1) | (rem >= d ? 1 : 0);
-        if (rem >= d) rem -= d;
+    uint64_t remLo = 0, remHi = 0, qLoVal = 0, qHiVal = 0;
+    for (int i = 127; i >= 0; --i) {
+        const uint64_t bit = (i >= 64) ? ((nhi >> (i - 64)) & 1ULL) : ((nlo >> i) & 1ULL);
+        const uint64_t carry = (remHi >> 63) & 1ULL;
+        remHi = (remHi << 1) | (remLo >> 63);
+        remLo = (remLo << 1) | bit;
+        const bool ge = (carry != 0) || (remHi > dhi) || (remHi == dhi && remLo >= dlo);
+        if (ge) {
+            const uint64_t oldLo = remLo;
+            remLo -= dlo;
+            remHi = remHi - dhi - (oldLo < dlo ? 1ULL : 0ULL);
+            if (i >= 64)
+                qHiVal |= (1ULL << (i - 64));
+            else
+                qLoVal |= (1ULL << i);
+        }
     }
     *qlo = qLoVal;
     *qhi = qHiVal;
-    *r = rem;
-}
-
-// True when v is exactly representable as i64 (two's-complement limb).
-static bool int128FitsI64(const Int128& v, int64_t& out) {
-    if (v.hi == 0 && v.lo <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-        out = static_cast<int64_t>(v.lo);
-        return true;
-    }
-    if (v.hi == -1 && v.lo >= 0x8000000000000000ULL) {
-        out = static_cast<int64_t>(v.lo);
-        return true;
-    }
-    return false;
+    *rlo = remLo;
+    *rhi = remHi;
 }
 
 Int128 Int128::divRem(const Int128& num, const Int128& den, Int128* rem) {
@@ -125,48 +117,37 @@ Int128 Int128::divRem(const Int128& num, const Int128& den, Int128* rem) {
         if (rem) *rem = Int128(0);
         return Int128(0);
     }
-    const bool neg = num.negative() != den.negative();
-    Int128 n = num.abs();
-    Int128 d = den.abs();
-    if (d.hi != 0) {
-        // Denominator too large for our udiv128 fast path; approximate via double (not used in grid hot paths with sr*rate_den).
-        if (rem) *rem = Int128(0);
-        return Int128(0);
-    }
-    uint64_t qlo = 0, qhi = 0, rlo = 0;
-    udiv128(n.lo, static_cast<uint64_t>(n.hi), d.lo, &qlo, &qhi, &rlo);
-    if (rem) *rem = fromParts(rlo, 0);
-    Int128 q = fromParts(qlo, static_cast<int64_t>(qhi));
-    return neg ? -q : q;
+    const bool negQ = num.negative() != den.negative();
+    const bool negR = num.negative();
+    uint64_t nlo = 0, nhi = 0, dlo = 0, dhi = 0;
+    absU128(num, nlo, nhi);
+    absU128(den, dlo, dhi);
+    uint64_t qlo = 0, qhi = 0, rlo = 0, rhi = 0;
+    udiv128Full(nlo, nhi, dlo, dhi, &qlo, &qhi, &rlo, &rhi);
+    if (rem) *rem = fromAbsU128(rlo, rhi, negR);
+    return fromAbsU128(qlo, qhi, negQ);
 }
 
 Int128 Int128::divEuclid(const Int128& num, const Int128& den) {
-  int64_t n = 0, d = 0;
-    if (int128FitsI64(num, n) && int128FitsI64(den, d) && d != 0) {
-        int64_t q = n / d;
-        const int64_t r = n % d;
-        if (r < 0) q -= 1;
-        return Int128(q);
-    }
     // after Rust i128::div_euclid (truncating / and %, then step down if r < 0)
     Int128 rem;
     Int128 q = divRem(num, den, &rem);
-    if (num.negative() != den.negative()) {
-        if (rem != Int128(0)) q = q - Int128(1);
-    } else if (rem.negative()) {
-        q = q - Int128(1);
+    if (rem.negative()) {
+        if (den.negative())
+            q = q + Int128(1);
+        else
+            q = q - Int128(1);
     }
     return q;
 }
 
 Int128 Int128::operator/(int64_t d) const {
     if (d == 0) return Int128(0);
-    return divEuclid(*this, Int128(d));
+    return divRem(*this, Int128(d), nullptr);
 }
 
 int64_t Int128::saturatingToI64() const {
     if (hi > 0 || (hi == 0 && lo > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))) return std::numeric_limits<int64_t>::max();
-    // hi == -1 and lo with MSB set is a normal negative i64 (not "lo > MAX" — that is true for all negatives).
     if (hi < -1 || (hi == -1 && lo < 0x8000000000000000ULL)) return std::numeric_limits<int64_t>::min();
     return static_cast<int64_t>(lo);
 }

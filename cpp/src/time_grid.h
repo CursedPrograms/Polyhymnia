@@ -5,6 +5,7 @@
 #include "time_samples.h"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,7 @@ const GridScale GRID_SCALE_TIME[5] = {GridScale::BarsBeats, GridScale::MinSecs, 
 const char* gridScaleLabel(GridScale s);
 const char* gridScaleId(GridScale s);
 GridScale gridScaleFromId(const char* id);
+std::optional<GridScale> gridScaleFromIdOpt(const char* id);
 
 enum class TimecodeValue { Second, FiveFrames, Frame, HalfFrame, QuarterFrame, SubFrame };
 const TimecodeValue TIMECODE_ALL[6] = {TimecodeValue::Second, TimecodeValue::FiveFrames, TimecodeValue::Frame, TimecodeValue::HalfFrame,
@@ -45,12 +47,15 @@ const TimecodeValue TIMECODE_ALL[6] = {TimecodeValue::Second, TimecodeValue::Fiv
 
 const char* timecodeValueLabel(TimecodeValue v);
 const char* timecodeValueId(TimecodeValue v);
+std::optional<TimecodeValue> timecodeValueFromId(const char* id);
 
 enum class FeetFramesValue { Foot, Frame, QuarterFrame, SubFrame };
 const FeetFramesValue FEET_FRAMES_ALL[4] = {FeetFramesValue::Foot, FeetFramesValue::Frame, FeetFramesValue::QuarterFrame,
-                                           FeetFramesValue::SubFrame};
+                                            FeetFramesValue::SubFrame};
 
 const char* feetFramesValueLabel(FeetFramesValue v);
+const char* feetFramesValueId(FeetFramesValue v);
+std::optional<FeetFramesValue> feetFramesValueFromId(const char* id);
 
 struct GridValue {
     enum class Kind { Note, Seconds, Frames, Timecode, FeetFrames, Samples };
@@ -91,6 +96,7 @@ struct GridValue {
     static GridValue samples(int64_t n);
 
     bool operator==(const GridValue& o) const;
+    bool operator!=(const GridValue& o) const { return !(*this == o); }
 };
 
 // Feet+Frames increment math (after grid.rs FeetFramesValue impl).
@@ -104,6 +110,7 @@ Time::TempoMap tempoMapFromSession(const Session::Document& doc);
 Time::SampleRate sampleRateFromSession(const Session::Document& doc);
 
 long long stepSamples(const Session::Document& doc);
+std::vector<long long> gridLines(const Session::Document& doc, long long start, long long end, size_t max);
 long long gridLineAtOrBeforeExcluding(const Session::Document& doc, long long position, const std::vector<std::string>& excluded);
 long long snapToGridExcluding(const Session::Document& doc, long long position, const std::vector<std::string>& excluded);
 

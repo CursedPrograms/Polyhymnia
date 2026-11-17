@@ -22,6 +22,8 @@ public:
         return v;
     }
 
+    static Int128 fromU64(uint64_t v) { return fromParts(v, 0); }
+
     bool negative() const { return hi < 0; }
 
     Int128 operator-() const {
@@ -33,7 +35,12 @@ public:
 
     Int128 abs() const { return negative() ? -(*this) : *this; }
 
-    static Int128 unsignedAbs(int64_t v) { return v == std::numeric_limits<int64_t>::min() ? fromParts(0, 0x8000000000000000ULL) : Int128(v < 0 ? -v : v); }
+    // after SoundCraft i128::from(v.unsigned_abs())
+    static Int128 unsignedAbs(int64_t v) {
+        return v == std::numeric_limits<int64_t>::min()
+            ? fromParts(0x8000000000000000ULL, 0)
+            : Int128(v < 0 ? -v : v);
+    }
 
     bool operator==(const Int128& o) const { return lo == o.lo && hi == o.hi; }
     bool operator!=(const Int128& o) const { return !(*this == o); }
@@ -60,9 +67,15 @@ public:
 
     Int128 operator/(int64_t d) const;
     Int128 operator/(const Int128& d) const { return divRem(*this, d, nullptr); }
+    Int128 operator%(const Int128& d) const {
+        Int128 r;
+        divRem(*this, d, &r);
+        return r;
+    }
 
 private:
-    static void udiv128(uint64_t nlo, uint64_t nhi, uint64_t d, uint64_t* qlo, uint64_t* qhi, uint64_t* r);
+    static void udiv128Full(uint64_t nlo, uint64_t nhi, uint64_t dlo, uint64_t dhi,
+                            uint64_t* qlo, uint64_t* qhi, uint64_t* rlo, uint64_t* rhi);
 };
 
 inline Int128 mul64(int64_t a, int64_t b) { return Int128(a) * b; }

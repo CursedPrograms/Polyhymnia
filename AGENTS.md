@@ -46,6 +46,25 @@ Maya, Pennsylvania Dutch), a splash screen, opens empty (Preferences can reopen 
 11. **Plugins**: VST3 and CLAP hosting (`crates/vst3-host`, `crates/clap-host`).
 12. **Video** (`crates/video`): a video track to score to.
 
+## Audio devices, plugins and the Octavia stock plugins (the user asked for these)
+
+- **ASIO**, beside WASAPI (and the others miniaudio has): port SoundCraft's device handling (`crates/playback/src/devices.rs`,
+  `record.rs`: audio system, device, sample rate, buffer size, input/output channels, the best sample format first, as
+  ASIO drivers want) into Preferences > Audio. miniaudio has no ASIO, so use Steinberg's ASIO SDK behind a CMake option
+  `POLYHYMNIA_ASIO` (on for the Windows release). Its licence is GPLv3 or Steinberg's own agreement: don't commit the SDK
+  itself; fetch it at build time like SoundCraft does, and write the licence question under "asks" for the user.
+- **VST3 hosting**, moved up: do it right after phase 6 (the Mix window), before recording. Port `crates/vst3-host` (scan
+  the standard VST3 folders plus a user folder in Preferences, load in-process, each plugin's own editor window, parameters
+  with automation later, state saved in the project, a crashed or missing plugin never takes the session down) using
+  Steinberg's VST3 SDK (MIT). CLAP (`crates/clap-host`) after it.
+- **Octavia stock plugins, as a free bonus**: Preferences > Plugins (and the plugin browser) gets "Get the Octavia plugins",
+  which downloads the latest Windows release of each of the user's own plugins from GitHub
+  (`https://api.github.com/repos/CursedPrograms/<repo>/releases/latest`, the `*-win64.zip` asset): **SafetyPin**,
+  **Fuzz14**, **stringtuner** (and **Solderless** once it has a release; read the list from
+  https://github.com/CursedPrograms/OctaviaVSTs so new ones appear by themselves). Unzip the `.vst3` into the user's
+  VST3 folder, show progress, update when a newer release is out, and list them under an "Octavia" vendor in the browser.
+  The installers (install.bat / .ps1 / .sh) offer the same download, off by default.
+
 ## Testing
 
 Every feature gets a test hook: `Polyhymnia.exe --script NAME --capture shot.bmp` (drives the feature as a user
@@ -57,6 +76,7 @@ test, look at the screenshot, then commit.
 
 Polyhymnia is a port of SoundCraft, not something inspired by it. For every feature:
 
+- **Icons: use SoundCraft's exact icons.** SoundCraft draws its icons in code (`crates/ui-egui/src/icons.rs`, original artwork, MIT OR Apache-2.0). Port that file's drawing one to one onto ImDrawList so every icon (edit tools, modes, transport, track buttons, panels) looks exactly like SoundCraft's, used in the same places. Never draw your own or use letters as icons. The app logo stays Polyhymnia's own.
 - **Read the original first.** Open the SoundCraft files that do it and port them function by function: the same logic,
   the same edge cases, the same settings and limits, names in C++ style. Note at each function where it came from:
   `// after SoundCraft (crates/.../file.rs fn_name)`.

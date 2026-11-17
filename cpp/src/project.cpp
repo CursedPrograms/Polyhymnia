@@ -1,5 +1,6 @@
 // Polyhymnia - line-oriented session file I/O (after SoundCraft session save; JSON-like keys).
 #include "project.h"
+#include "mix.h"
 
 #include <fstream>
 #include <sstream>
@@ -36,10 +37,21 @@ static void trim(std::string& s) {
     if (i) s.erase(0, i);
 }
 
+static std::string relPath(const fs::path& projectDir, const std::string& stored) {
+    fs::path p = fs::u8path(stored);
+    if (p.is_absolute()) {
+        std::error_code ec;
+        fs::path rel = fs::relative(p, projectDir, ec);
+        if (!ec) return rel.u8string();
+    }
+    return stored;
+}
+
 bool save(const Session::Document& doc, const std::string& path, std::string& err) {
     std::ofstream f(fs::u8path(path), std::ios::binary);
     if (!f) { err = "Could not write the project file."; return false; }
-    f << "polyhymnia " << doc.version << "\n";
+    const fs::path folder = fs::u8path(path).parent_path();
+    f << "polyhymnia " << Mix::kProjectFormatVersion << "\n";
     f << "session.name=" << doc.name << "\n";
     f << "session.rate=" << doc.sampleRate << "\n";
     f << "session.tempo=" << doc.time.tempoBpm << "\n";
@@ -49,7 +61,7 @@ bool save(const Session::Document& doc, const std::string& path, std::string& er
         f << "marker." << m.id << ".at=" << m.at << "\n";
     }
     for (const auto& s : doc.sources) {
-        f << "source." << s.id << ".path=" << s.path << "\n";
+        f << "source." << s.id << ".path=" << relPath(folder, s.path) << "\n";
         f << "source." << s.id << ".rate=" << s.sampleRate << "\n";
         f << "source." << s.id << ".channels=" << s.channels << "\n";
     }
@@ -87,6 +99,10 @@ bool load(const std::string& path, Session::Document& doc, std::string& err) {
     doc.folder = fs::u8path(path).parent_path().u8string();
     std::string line;
     if (!std::getline(f, line) || line.find("polyhymnia") != 0) { err = "Not a Polyhymnia project."; return false; }
+    {
+        const size_t sp = line.find(' ');
+        if (sp != std::string::npos) doc.version = std::stoi(line.substr(sp + 1));
+    }
     Session::Track* curTrack = nullptr;
     Session::Clip curClip;
     bool inClip = false;
@@ -173,6 +189,7 @@ bool load(const std::string& path, Session::Document& doc, std::string& err) {
         }
     }
     if (inClip && curTrack) curTrack->clips.push_back(curClip);
+    doc.touch++;
     return true;
 }
 

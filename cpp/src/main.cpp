@@ -145,7 +145,11 @@ int main(int argc, char** argv) {
         const std::string a = argv[i];
         if (a == "--capture" && i + 1 < argc) capture = argv[++i];
         else if (a == "--script" && i + 1 < argc) scriptName = argv[++i];
-        else if (a == "--render" && i + 2 < argc) return runRender(argv[++i], argv[++i]);
+        else if (a == "--render" && i + 2 < argc) {
+            const char* projectPath = argv[++i];
+            const char* outWav = argv[++i];
+            return runRender(projectPath, outWav);
+        }
         else if (a == "--audiotest" && i + 1 < argc) return runAudioTest(argv[++i]);
     }
 

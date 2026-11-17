@@ -211,6 +211,8 @@ int main(int argc, char** argv) {
     }
     if (quitEarly) App::requestQuit();
 
+    if (!capture.empty() && !scriptName.empty()) App::script(scriptName);
+
     int frames = 0;
     while (!App::wantsQuit()) {
         SDL_Event e;
@@ -231,8 +233,7 @@ int main(int argc, char** argv) {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         ++frames;
         if (!capture.empty()) {
-            if (frames == 2 && !scriptName.empty()) App::script(scriptName);
-            if (frames >= 6) {
+            if (frames >= 4) {
                 std::vector<unsigned char> px((size_t)w * h * 4);
                 glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
                 std::vector<unsigned char> flip(px.size());

@@ -1,5 +1,7 @@
 // Polyhymnia - timeline with dual rulers, track lanes, clip waveforms and playhead.
 #include "edit.h"
+#include "app.h"
+#include "editor.h"
 #include "lang.h"
 #include "mix.h"
 #include "tempo.h"
@@ -12,7 +14,7 @@
 
 namespace Edit {
 
-static float samplesPerPixel = 128.0f;
+static float gSamplesPerPixel = 128.0f;
 static float scrollX = 0.0f;
 static float scrollY = 0.0f;
 static const float kTrackH = 72.0f;
@@ -45,11 +47,11 @@ static void drawRulers(ImDrawList* dl, const ImVec2& origin, float width, const 
     dl->AddRectFilled(origin, ImVec2(origin.x + width, y0 + kRulerH), C_PANEL);
     dl->AddLine(ImVec2(origin.x, yMid), ImVec2(origin.x + width, yMid), C_LINE);
     const long long visStart = (long long)scrollX;
-    const long long visEnd = visStart + (long long)(width * samplesPerPixel);
+    const long long visEnd = visStart + (long long)(width * gSamplesPerPixel);
     const long long beatStep = std::max(1LL, (long long)spb);
     const long long barSamples = (long long)(spb * doc.time.meter.num);
     for (long long s = (visStart / beatStep) * beatStep; s < visEnd; s += beatStep) {
-        const float x = origin.x + (float)((s - visStart) / samplesPerPixel);
+        const float x = origin.x + (float)((s - visStart) / gSamplesPerPixel);
         const bool bar = barSamples > 0 && (s % barSamples) == 0;
         dl->AddLine(ImVec2(x, y0 + (bar ? 4.0f : 12.0f)), ImVec2(x, y0 + kRulerH), bar ? C_TEXT : C_DIM);
         if (bar) {
@@ -61,7 +63,7 @@ static void drawRulers(ImDrawList* dl, const ImVec2& origin, float width, const 
     }
     const long long secStep = rate > 0 ? (long long)rate : 48000LL;
     for (long long s = (visStart / secStep) * secStep; s < visEnd; s += secStep) {
-        const float x = origin.x + (float)((s - visStart) / samplesPerPixel);
+        const float x = origin.x + (float)((s - visStart) / gSamplesPerPixel);
         dl->AddLine(ImVec2(x, yMid), ImVec2(x, y0 + kRulerH), C_LINE);
         const int sec = (int)(s / (long long)rate);
         char buf[16];
@@ -81,7 +83,7 @@ void draw(Session::Document& doc, float transportReserve) {
     ImGui::InvisibleButton("timeline_drag", ImVec2(avail.x, std::min(avail.y, contentH)));
     const bool hovered = ImGui::IsItemHovered();
     if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
-        scrollX -= ImGui::GetIO().MouseDelta.x * samplesPerPixel;
+        scrollX -= ImGui::GetIO().MouseDelta.x * gSamplesPerPixel;
         scrollY -= ImGui::GetIO().MouseDelta.y;
         if (scrollX < 0) scrollX = 0;
         if (scrollY < 0) scrollY = 0;
@@ -90,9 +92,9 @@ void draw(Session::Document& doc, float transportReserve) {
         const float wheel = ImGui::GetIO().MouseWheel;
         if (wheel != 0.0f) {
             if (ImGui::GetIO().KeyShift)
-                scrollX -= wheel * samplesPerPixel * 32.0f;
+                scrollX -= wheel * gSamplesPerPixel * 32.0f;
             else
-                samplesPerPixel = std::clamp(samplesPerPixel * (wheel > 0 ? 0.9f : 1.1f), 8.0f, 4096.0f);
+                gSamplesPerPixel = std::clamp(gSamplesPerPixel * (wheel > 0 ? 0.9f : 1.1f), 8.0f, 4096.0f);
         }
     }
 
@@ -106,6 +108,41 @@ void draw(Session::Document& doc, float transportReserve) {
     dl->AddText(ImVec2(p0.x + 8, p0.y + kRulerH * 0.5f + 10 - scrollY), C_DIM, T("Min:sec"));
 
     const long long visStart = (long long)scrollX;
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        const float mx = ImGui::GetIO().MousePos.x;
+        const float my = ImGui::GetIO().MousePos.y;
+        const long long clickSample = visStart + (long long)((mx - (p0.x + kHeaderW)) * gSamplesPerPixel);
+        const int row = (int)((my - (p0.y + kRulerH - scrollY)) / kTrackH);
+        if (row >= 0 && row < (int)doc.tracks.size() && clickSample >= 0) {
+            const auto& track = doc.tracks[(size_t)row];
+            const auto& tool = Editor::tool();
+            if (tool == Editor::Tool::Selector) {
+                Editor::selectRange(clickSample, clickSample + Editor::gridStepSamples(doc), track.id);
+            } else if (tool == Editor::Tool::Grabber || tool == Editor::Tool::Smart) {
+                for (const auto& clip : track.clips) {
+                    if (clickSample >= clip.start && clickSample < clip.start + clip.length)
+                        Editor::selectClip(doc, track.id, clip.id);
+                }
+            } else if (tool == Editor::Tool::Trim && Editor::selection().clips.size() == 1) {
+                const auto& r = Editor::selection().clips[0];
+                if (r.trackId == track.id) {
+                    const Session::Clip* sc = nullptr;
+                    for (const auto& c : track.clips)
+                        if (c.id == r.clipId) sc = &c;
+                    if (sc) {
+                        const long long mid = sc->start + sc->length / 2;
+                        const bool head = clickSample < mid;
+                        App::mutateDocument(head ? "Trim start" : "Trim end", [&](Session::Document& d) {
+                            if (head)
+                                Editor::trimClipStart(d, r.trackId, r.clipId, clickSample);
+                            else
+                                Editor::trimClipEnd(d, r.trackId, r.clipId, clickSample);
+                        });
+                    }
+                }
+            }
+        }
+    }
     for (int ti = 0; ti < (int)doc.tracks.size(); ++ti) {
         const float rowY = p0.y + kRulerH + (float)ti * kTrackH - scrollY;
         const auto& track = doc.tracks[(size_t)ti];
@@ -118,12 +155,16 @@ void draw(Session::Document& doc, float transportReserve) {
         const Mix::MixPlan::TrackPlay* tplay = nullptr;
         if (plan && ti < (int)plan->tracks.size()) tplay = &plan->tracks[(size_t)ti];
         for (const auto& clip : track.clips) {
-            const float x0 = p0.x + kHeaderW + (float)((clip.start - visStart) / samplesPerPixel);
-            const float x1 = p0.x + kHeaderW + (float)((clip.start + clip.length - visStart) / samplesPerPixel);
+            const float x0 = p0.x + kHeaderW + (float)((clip.start - visStart) / gSamplesPerPixel);
+            const float x1 = p0.x + kHeaderW + (float)((clip.start + clip.length - visStart) / gSamplesPerPixel);
             if (x1 < p0.x + kHeaderW || x0 > p0.x + avail.x) continue;
             const float y0 = rowY + 4;
             const float y1 = rowY + kTrackH - 6;
-            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), C_CLIP, 2.0f);
+            bool selected = false;
+            for (const auto& r : Editor::selection().clips)
+                if (r.trackId == track.id && r.clipId == clip.id) selected = true;
+            const ImU32 fill = selected ? IM_COL32(0x00, 0x7b, 0xb7, 220) : C_CLIP;
+            dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), fill, 2.0f);
             if (tplay) {
                 for (const auto& cplay : tplay->clips)
                     if (cplay.clip.id == clip.id && cplay.audio && cplay.audio->frames > 0) {
@@ -136,23 +177,67 @@ void draw(Session::Document& doc, float transportReserve) {
         }
     }
     const long long head = Playback::playhead();
-    const float playX = p0.x + kHeaderW + (float)((head - visStart) / samplesPerPixel);
+    const float playX = p0.x + kHeaderW + (float)((head - visStart) / gSamplesPerPixel);
     if (playX >= p0.x + kHeaderW && playX <= p0.x + avail.x)
         dl->AddLine(ImVec2(playX, p0.y - scrollY), ImVec2(playX, p0.y + contentH - scrollY), C_BLUE, 2.0f);
     for (const auto& m : doc.markers) {
-        const float x = p0.x + kHeaderW + (float)((m.at - visStart) / samplesPerPixel);
+        const float x = p0.x + kHeaderW + (float)((m.at - visStart) / gSamplesPerPixel);
         if (x < p0.x + kHeaderW || x > p0.x + avail.x) continue;
         dl->AddLine(ImVec2(x, p0.y - scrollY), ImVec2(x, p0.y + contentH - scrollY), IM_COL32(0xff, 0xcc, 0x44, 200), 1.0f);
     }
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + contentH));
-    ImGui::TextDisabled("%s %.0f  %s %lld", T("Zoom"), samplesPerPixel, T("Playhead"), (long long)head);
+    ImGui::TextDisabled("%s %.0f  %s %lld", T("Zoom"), gSamplesPerPixel, T("Playhead"), (long long)head);
+    ImGui::EndChild();
+}
+
+void drawToolbar() {
+    ImGui::BeginChild("edit_tools", ImVec2(0, 36), false, ImGuiWindowFlags_NoScrollbar);
+    auto modeBtn = [](const char* label, Editor::Mode m) {
+        const bool on = Editor::mode() == m;
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(C_BLUE));
+        if (ImGui::Button(label, ImVec2(72, 0))) Editor::setMode(m);
+        if (on) ImGui::PopStyleColor();
+        ImGui::SameLine();
+    };
+    modeBtn("Shuffle", Editor::Mode::Shuffle);
+    modeBtn("Slip", Editor::Mode::Slip);
+    modeBtn("Spot", Editor::Mode::Spot);
+    modeBtn("Grid", Editor::Mode::Grid);
+    modeBtn("Rel", Editor::Mode::GridRelative);
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+    auto toolBtn = [](const char* label, Editor::Tool t) {
+        const bool on = Editor::tool() == t;
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(C_BLUE));
+        if (ImGui::Button(label, ImVec2(64, 0))) Editor::setTool(t);
+        if (on) ImGui::PopStyleColor();
+        ImGui::SameLine();
+    };
+    toolBtn("Smart", Editor::Tool::Smart);
+    toolBtn("Sel", Editor::Tool::Selector);
+    toolBtn("Grab", Editor::Tool::Grabber);
+    toolBtn("Trim", Editor::Tool::Trim);
+    ImGui::SameLine();
+    bool snap = Editor::snapToGrid();
+    if (ImGui::Checkbox(T("Snap"), &snap)) Editor::setSnapToGrid(snap);
     ImGui::EndChild();
 }
 
 void scriptSetup(Session::Document& doc) {
     scrollX = 0;
-    samplesPerPixel = 256;
+    gSamplesPerPixel = 256;
+    Editor::setMode(Editor::Mode::Grid);
+    Editor::setTool(Editor::Tool::Smart);
     doc.touch++;
+}
+
+float samplesPerPixel() { return gSamplesPerPixel; }
+
+long long sampleAtX(float localX, float headerW) {
+    (void)headerW;
+    const long long visStart = (long long)scrollX;
+    return visStart + (long long)(localX * gSamplesPerPixel);
 }
 
 } // namespace Edit

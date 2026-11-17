@@ -5,5 +5,8 @@
 
 namespace Edit {
 void draw(Session::Document& doc, float transportReserve);
+void drawToolbar();
 void scriptSetup(Session::Document& doc);
+float samplesPerPixel();
+long long sampleAtX(float localX, float headerW);
 } // namespace Edit

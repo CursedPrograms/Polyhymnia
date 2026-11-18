@@ -12,8 +12,8 @@
       drag and drop from Explorer onto a track (lands where dropped), onto empty space (new track), and onto the Clips list;
       the Clips list on the right shows them (`crates/ui-egui/src/import.rs`, `panels/clips.rs`, `crates/engine` import
       commands). Test: a script hook that imports and drops files; check the screenshot.
-   2. **The Edit window layout and SoundCraft's exact icons** (item 0b & item 11 — DONE).
-   3. **The Mix window** (phase 6): faders, pan, mute, solo, meters, sends, busses, the master, built-in effects.
+   2. **The Edit window layout and SoundCraft's exact icons** (item 0b & item 11 — DONE in `fa30be0`).
+   3. **The Mix window** (phase 6 — DONE): faders, pan, mute, solo, meters, sends, busses, the master, built-in effects.
    4. **Recording** (phase 7), then **Bounce / Export** to WAV, FLAC, MP3 (phase 10).
    5. **VST3 hosting and the Octavia plugins** (AGENTS.md).
    Then carry on with the audit's remaining items.
@@ -21,7 +21,8 @@
 ## Done
 
 10. 00.1 Importing audio, drag-and-drop (`SDL_DROPFILE`), and Clips list (`fde9d70`, 18/18 tests).
-11. 00.2 / 0b / 11 Edit window layout, SoundCraft exact icons (`icons.rs`), 9-track Midnight Groove demo (`demo.rs`), and standalone Fades dialog (`168/168` selftests, `--script edit` and `--script fades_test` screenshots verified).
+11. 00.2 / 0b / 11 Edit window layout, SoundCraft exact icons (`icons.rs`), 9-track Midnight Groove demo (`demo.rs`), and standalone Fades dialog (`fa30be0`, `168/168` selftests, `--script edit` and `--script fades_test` screenshots verified).
+12. 00.3 The Mix window and built-in DSP effects (`crates/dsp`, `crates/model/src/mixer.rs`, `crates/mix`, `crates/ui-egui/src/mix_window.rs`, `mix_window/*.rs`, `panels/plugins.rs`, `widgets.rs`; 11/11 tests, `179/179` selftests, `--script mix` screenshot verified beside `sc-mix.png`).
 
 1. Repo README, GitHub Pages, FUNDING.yml, link.bf, `gh repo edit` topics, Pages on `main`.
 2. Skeleton: full Atelier `applyStyle()` (no default ImGui navy on Preferences tabs/title/resize grip).
@@ -165,3 +166,5 @@ layout port; **Fades dialog** UI (item 11). **Next:** finish 0b + fades dialog, 
   - **Clips (`edit_window/clips.rs`)**: Missing track/clip colour palette, clip name bar, MIDI note rendering on instrument/MIDI clips, fade curves & handles, crossfade curves, clip gain line & fader icon, sync/lock/rating overlays.
   - **Bottom tabs & status bar (`edit_window.rs`, `panels/memory.rs`, `panels/history.rs`, `panels/midi_editor.rs`)**: Missing `MIDI EDITOR`, `MEMORY LOCATIONS`, `UNDO HISTORY` bottom tabs and the bottom status bar (`session · sample rate · bit depth · track count`).
   - **Dialogs (`dialogs.rs`, `dialogs/ops_windows.rs`, `dialogs/spot.rs`)**: Missing standalone Fades dialog (REVIEW.md item 11) with curve preview and 5 shapes; Spot dialog is missing `Spot::source` and `Original Time Stamp` + `Use` button.
+
+- Claude checked fa30be0 (Edit window): matches edit.png well. Small fixes when convenient: the inserts line in each track header is clipped at the bottom ("EQ7 · Comp", "— no inserts —" cut in half), and the Grid value in the toolbar is truncated ("0|0|24("); size the header rows and the Grid field as SoundCraft does.

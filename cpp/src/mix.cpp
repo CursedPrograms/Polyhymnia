@@ -232,6 +232,7 @@ void rebuildPlan(const Session::Document& doc) {
     auto plan = std::make_shared<MixPlan>();
     plan->sampleRate = doc.sampleRate;
     plan->length = sessionLength(doc);
+    plan->busses = doc.busses;
     std::unordered_map<std::string, std::shared_ptr<const Buffer>> loaded;
     for (const auto& s : doc.sources) {
         loaded[s.id] = loadSource(doc, s, plan->missingNote);
@@ -253,7 +254,24 @@ void rebuildPlan(const Session::Document& doc) {
             cp.peaks = buildPeaks(*cp.audio, 256);
             tp.clips.push_back(cp);
         }
-        plan->tracks.push_back(tp);
+        for (const auto& insOpt : track.mixer.inserts) {
+            MixPlan::InsertSlot slot;
+            if (insOpt.has_value()) {
+                slot.insert = *insOpt;
+                if (!slot.insert.plugin.empty() && slot.insert.active) {
+                    auto plug = Dsp::create(slot.insert.plugin);
+                    if (plug) {
+                        plug->prepare(static_cast<float>(doc.sampleRate > 0 ? doc.sampleRate : 48000.0), 4096, 2);
+                        for (const auto& kv : slot.insert.params) {
+                            plug->setParam(kv.first, kv.second);
+                        }
+                        slot.plugin = std::shared_ptr<Dsp::Plugin>(std::move(plug));
+                    }
+                }
+            }
+            tp.inserts.push_back(std::move(slot));
+        }
+        plan->tracks.push_back(std::move(tp));
     }
     std::atomic_store(&livePlan, std::shared_ptr<const MixPlan>(plan));
 }
@@ -262,51 +280,171 @@ std::shared_ptr<const MixPlan> currentPlan() {
     return std::atomic_load(&livePlan);
 }
 
+static void runInsertChain(const MixPlan::TrackPlay& tplay, std::vector<std::vector<float>>& planar, unsigned frameCount) {
+    for (const auto& slot : tplay.inserts) {
+        if (!slot.insert.plugin.empty() && slot.insert.active && !slot.insert.bypass && slot.plugin) {
+            for (const auto& kv : slot.insert.params) {
+                slot.plugin->setParam(kv.first, kv.second);
+            }
+            slot.plugin->process(planar, frameCount);
+        }
+    }
+}
+
 void render(long long startSample, float* outStereo, unsigned frameCount, double sampleRate) {
     std::memset(outStereo, 0, frameCount * 2 * sizeof(float));
     const auto plan = std::atomic_load(&livePlan);
-    if (!plan) return;
+    if (!plan || frameCount == 0) return;
     bool anySolo = false;
-    for (const auto& t : plan->tracks)
-        if (t.track.solo) { anySolo = true; break; }
-    for (const auto& tplay : plan->tracks) {
+    for (const auto& t : plan->tracks) {
+        if (t.track.kind != Session::TrackKind::Master && t.track.kind != Session::TrackKind::Vca && !t.track.inactive && t.track.solo) {
+            anySolo = true;
+            break;
+        }
+    }
+
+    // Bus buffers (stereo planar per bus numId).
+    std::unordered_map<uint64_t, std::vector<std::vector<float>>> busBufs;
+    for (const auto& b : plan->busses) {
+        busBufs[b.numId] = {std::vector<float>(frameCount, 0.0f), std::vector<float>(frameCount, 0.0f)};
+    }
+    std::vector<std::vector<float>> mainBuf = {std::vector<float>(frameCount, 0.0f), std::vector<float>(frameCount, 0.0f)};
+
+    auto processStrip = [&](const MixPlan::TrackPlay& tplay, bool isAuxPass) {
         const auto& track = tplay.track;
-        if (track.mute) continue;
-        if (anySolo && !track.solo) continue;
-        const float trackGain = dbToLin(track.gainDb);
-        const float pan = std::clamp(track.pan, -1.0f, 1.0f);
-        const float lPan = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
-        const float rPan = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
-        for (const auto& cplay : tplay.clips) {
-            const auto& clip = cplay.clip;
-            const auto& src = cplay.audio;
-            if (!src || src->frames <= 0) continue;
-            const double ratio = sampleRate / (double)src->sampleRate;
-            const float* pcm = src->stereo.data();
-            for (unsigned i = 0; i < frameCount; ++i) {
-                const long long timeline = startSample + (long long)i;
-                if (timeline < clip.start || timeline >= clip.start + clip.length) continue;
-                const long long inClip = timeline - clip.start;
-                const long long srcPos = clip.offset + (long long)(inClip / ratio);
-                if (srcPos < 0 || srcPos >= src->frames) continue;
-                float l = pcm[(size_t)srcPos * 2];
-                float r = pcm[(size_t)srcPos * 2 + 1];
-                const float g = dbToLin(clip.gainDb) * trackGain;
-                l *= g;
-                r *= g;
-                const float fi = fadeGain(clip.fadeIn, inClip, true);
-                l *= fi;
-                r *= fi;
-                if (clip.fadeOut.len > 0 && inClip >= clip.length - clip.fadeOut.len) {
-                    const long long tail = inClip - (clip.length - clip.fadeOut.len);
-                    const float fo = 1.0f - fadeGain(clip.fadeOut, tail, true);
-                    l *= fo;
-                    r *= fo;
+        if (track.inactive || track.kind == Session::TrackKind::Master || track.kind == Session::TrackKind::Vca) return;
+        const bool isAux = (track.kind == Session::TrackKind::Aux || track.kind == Session::TrackKind::Folder);
+        if (isAux != isAuxPass) return;
+
+        std::vector<std::vector<float>> stripBuf = {std::vector<float>(frameCount, 0.0f), std::vector<float>(frameCount, 0.0f)};
+        if (isAux) {
+            if (track.mixer.input.kind == Session::Route::Kind::Bus) {
+                auto bit = busBufs.find(track.mixer.input.busId);
+                if (bit != busBufs.end()) {
+                    stripBuf[0] = bit->second[0];
+                    stripBuf[1] = bit->second[1];
                 }
-                outStereo[i * 2] += l * lPan;
-                outStereo[i * 2 + 1] += r * rPan;
+            }
+        } else {
+            for (const auto& cplay : tplay.clips) {
+                const auto& clip = cplay.clip;
+                if (clip.muted) continue;
+                const auto& src = cplay.audio;
+                if (!src || src->frames <= 0) continue;
+                const double ratio = sampleRate / (double)src->sampleRate;
+                const float* pcm = src->stereo.data();
+                const float clipGain = dbToLin(clip.gainDb);
+                for (unsigned i = 0; i < frameCount; ++i) {
+                    const long long timeline = startSample + (long long)i;
+                    if (timeline < clip.start || timeline >= clip.start + clip.length) continue;
+                    const long long inClip = timeline - clip.start;
+                    const long long srcPos = clip.offset + (long long)(inClip / ratio);
+                    if (srcPos < 0 || srcPos >= src->frames) continue;
+                    float l = pcm[(size_t)srcPos * 2] * clipGain;
+                    float r = pcm[(size_t)srcPos * 2 + 1] * clipGain;
+                    const float fi = fadeGain(clip.fadeIn, inClip, true);
+                    l *= fi;
+                    r *= fi;
+                    if (clip.fadeOut.len > 0 && inClip >= clip.length - clip.fadeOut.len) {
+                        const long long tail = inClip - (clip.length - clip.fadeOut.len);
+                        const float fo = 1.0f - fadeGain(clip.fadeOut, tail, true);
+                        l *= fo;
+                        r *= fo;
+                    }
+                    stripBuf[0][i] += l;
+                    stripBuf[1][i] += r;
+                }
             }
         }
+
+        // Trim & phase invert.
+        const float trim = dbToLin(track.mixer.trimDb) * (track.mixer.phaseInvert ? -1.0f : 1.0f);
+        if (std::fabs(trim - 1.0f) > 1e-6f) {
+            for (unsigned i = 0; i < frameCount; ++i) {
+                stripBuf[0][i] *= trim;
+                stripBuf[1][i] *= trim;
+            }
+        }
+
+        // Inserts.
+        runInsertChain(tplay, stripBuf, frameCount);
+
+        // Pre-fader copy.
+        const std::vector<std::vector<float>> preBuf = stripBuf;
+
+        // Fader & mute/solo.
+        const bool muted = track.mute || (anySolo && !track.solo && !track.mixer.soloSafe);
+        const float trackGain = muted ? 0.0f : dbToLin(track.gainDb);
+        for (unsigned i = 0; i < frameCount; ++i) {
+            stripBuf[0][i] *= trackGain;
+            stripBuf[1][i] *= trackGain;
+        }
+
+        // Sends.
+        for (const auto& sndOpt : track.mixer.sends) {
+            if (!sndOpt.has_value()) continue;
+            const auto& snd = *sndOpt;
+            if (snd.target.kind != Session::Route::Kind::Bus || snd.mute) continue;
+            if (!snd.preFader && muted) continue;
+            auto bit = busBufs.find(snd.target.busId);
+            if (bit == busBufs.end()) continue;
+            const float sGain = dbToLin(snd.levelDb);
+            if (sGain <= 0.0f) continue;
+            const auto& sSrc = snd.preFader ? preBuf : stripBuf;
+            const float sPan = std::clamp(snd.pan, -1.0f, 1.0f);
+            const float slPan = std::cos((sPan + 1.0f) * 0.25f * 3.14159265f);
+            const float srPan = std::sin((sPan + 1.0f) * 0.25f * 3.14159265f);
+            for (unsigned i = 0; i < frameCount; ++i) {
+                bit->second[0][i] += sSrc[0][i] * sGain * slPan * 1.41421356f;
+                bit->second[1][i] += sSrc[1][i] * sGain * srPan * 1.41421356f;
+            }
+        }
+
+        if (muted) return;
+
+        // Pan & route to output.
+        const float mixerPan = track.mixer.pan.empty() ? 0.0f : track.mixer.pan[0];
+        const float panVal = (std::fabs(track.pan) > 1e-4f) ? track.pan : mixerPan;
+        const float pan = std::clamp(panVal, -1.0f, 1.0f);
+        const float lPan = std::cos((pan + 1.0f) * 0.25f * 3.14159265f);
+        const float rPan = std::sin((pan + 1.0f) * 0.25f * 3.14159265f);
+
+        std::vector<std::vector<float>>* dst = nullptr;
+        if (track.mixer.output.kind == Session::Route::Kind::Main) {
+            dst = &mainBuf;
+        } else if (track.mixer.output.kind == Session::Route::Kind::Bus) {
+            auto bit = busBufs.find(track.mixer.output.busId);
+            if (bit != busBufs.end()) dst = &bit->second;
+        }
+        if (dst) {
+            for (unsigned i = 0; i < frameCount; ++i) {
+                (*dst)[0][i] += stripBuf[0][i] * lPan;
+                (*dst)[1][i] += stripBuf[1][i] * rPan;
+            }
+        }
+    };
+
+    // Pass 1: Audio / Instrument / Midi tracks.
+    for (const auto& tplay : plan->tracks) processStrip(tplay, false);
+    // Pass 2: Aux / Folder returns.
+    for (const auto& tplay : plan->tracks) processStrip(tplay, true);
+    // Pass 3: Master faders.
+    for (const auto& tplay : plan->tracks) {
+        const auto& track = tplay.track;
+        if (track.inactive || track.kind != Session::TrackKind::Master) continue;
+        runInsertChain(tplay, mainBuf, frameCount);
+        const float mGain = track.mute ? 0.0f : dbToLin(track.gainDb);
+        if (std::fabs(mGain - 1.0f) > 1e-6f) {
+            for (unsigned i = 0; i < frameCount; ++i) {
+                mainBuf[0][i] *= mGain;
+                mainBuf[1][i] *= mGain;
+            }
+        }
+    }
+
+    for (unsigned i = 0; i < frameCount; ++i) {
+        outStereo[i * 2] = std::isfinite(mainBuf[0][i]) ? mainBuf[0][i] : 0.0f;
+        outStereo[i * 2 + 1] = std::isfinite(mainBuf[1][i]) ? mainBuf[1][i] : 0.0f;
     }
 }
 

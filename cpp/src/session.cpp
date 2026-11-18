@@ -810,6 +810,7 @@ Document midnightGrooveDemo() {
         tr->color = kTrackColors[colorIdx % 16];
         tr->gainDb = volDb;
         tr->pan = panVal;
+        if (tr->mixer.pan.size() == 1) tr->mixer.pan[0] = panVal;
         tr->view = "waveform";
         tr->insertsSummary = inserts ? inserts : "";
 
@@ -828,12 +829,27 @@ Document midnightGrooveDemo() {
         return tNum;
     };
 
+    const uint64_t verbBus = addBus(d, "Verb", ChannelFormat::Stereo);
     const uint64_t tk = addDemoAudioTrack("Kick", {std::move(kBuf)}, 4, 7, -3.0f, 0.0f, "EQ7 \xC2\xB7 Comp", {12, 20});
-    addDemoAudioTrack("Snare", {std::move(sBuf)}, 4, 6, -4.0f, 0.0f, "", {12, 20});
-    addDemoAudioTrack("Hats", {std::move(hBuf)}, 0, 5, -10.0f, 0.35f, "", {});
+    const uint64_t ts = addDemoAudioTrack("Snare", {std::move(sBuf)}, 4, 6, -4.0f, 0.0f, "", {12, 20});
+    const uint64_t th = addDemoAudioTrack("Hats", {std::move(hBuf)}, 0, 5, -10.0f, 0.35f, "", {});
     const uint64_t tb = addDemoAudioTrack("Bass", {std::move(bassBuf)}, 4, 10, -5.0f, 0.0f, "Comp \xC2\xB7 Satur", {8, 16});
     const uint64_t tp = addDemoAudioTrack("Pad", {std::move(padL), std::move(padR)}, 0, 1, -8.0f, -1.0f, "Chorus", {});
+    (void)th;
+    if (Track* kickTr = findTrackByNum(d, tk)) {
+        kickTr->mixer.inserts[0] = Insert::make("eq_7band");
+        kickTr->mixer.inserts[1] = Insert::make("compressor");
+    }
+    if (Track* snareTr = findTrackByNum(d, ts)) {
+        snareTr->mixer.sends[0] = SendSlot::make(Route::bus(verbBus), -10.0f);
+    }
+    if (Track* bassTr = findTrackByNum(d, tb)) {
+        bassTr->mixer.inserts[0] = Insert::make("compressor");
+        bassTr->mixer.inserts[1] = Insert::make("saturator");
+    }
     if (Track* padTr = findTrackByNum(d, tp)) {
+        padTr->mixer.inserts[0] = Insert::make("chorus");
+        padTr->mixer.sends[0] = SendSlot::make(Route::bus(verbBus), -8.0f);
         AutomationLane* l = padTr->laneMut({AutoParamKind::Volume, 0});
         l->setPoint(0, -30.0f);
         l->setPoint(static_cast<long long>(4 * bar), -8.0f);
@@ -849,6 +865,8 @@ Document midnightGrooveDemo() {
         tr->gainDb = -9.0f;
         tr->pan = -1.0f;
         tr->view = "notes";
+        tr->instrument = Insert::make("subtractive_synth");
+        tr->mixer.sends[0] = SendSlot::make(Route::bus(verbBus), -12.0f);
         Clip kc;
         kc.numId = newClipNumId(d);
         kc.id = "clip_" + std::to_string(kc.numId);
@@ -877,6 +895,8 @@ Document midnightGrooveDemo() {
         tr->gainDb = -12.0f;
         tr->pan = -1.0f;
         tr->view = "notes";
+        tr->instrument = Insert::make("subtractive_synth");
+        tr->mixer.sends[0] = SendSlot::make(Route::bus(verbBus), -6.0f);
         Clip lc;
         lc.numId = newClipNumId(d);
         lc.id = "clip_" + std::to_string(lc.numId);
@@ -906,6 +926,8 @@ Document midnightGrooveDemo() {
         tr->pan = -1.0f;
         tr->view = "volume";
         tr->insertsSummary = "Plate";
+        tr->mixer.input = Route::bus(verbBus);
+        tr->mixer.inserts[0] = Insert::make("plate_reverb");
     }
 
     // Master 1 track
@@ -916,6 +938,7 @@ Document midnightGrooveDemo() {
         tr->gainDb = 0.0f;
         tr->view = "volume";
         tr->insertsSummary = "Maximizer";
+        tr->mixer.inserts[0] = Insert::make("maximizer");
     }
 
     d.markers.push_back({"m1", "Intro", 0, 0, 1, 1, 0});
@@ -1040,6 +1063,50 @@ std::string uniqueTrackName(const Document& doc, const std::string& base) {
     return prefix + std::to_string(i);
 }
 
+// after SoundCraft (crates/model/src/mixer.rs fader_pos_to_db)
+float faderPosToDb(float pos) {
+    const float p = std::isfinite(pos) ? std::clamp(pos, 0.0f, 1.0f) : 0.0f;
+    if (p <= 0.0f) return -144.0f;
+    if (p >= 0.25f) return -24.0f + (p - 0.25f) / 0.75f * 36.0f;
+    return -24.0f - std::pow(1.0f - p / 0.25f, 1.5f) * 120.0f;
+}
+
+// after SoundCraft (crates/model/src/mixer.rs fader_db_to_pos)
+float faderDbToPos(float db) {
+    const float d = std::isfinite(db) ? db : -144.0f;
+    if (d <= -144.0f) return 0.0f;
+    if (d >= -24.0f) return std::min(1.0f, 0.25f + (std::min(12.0f, d) + 24.0f) / 36.0f * 0.75f);
+    const float x = std::pow(std::clamp((-24.0f - d) / 120.0f, 0.0f, 1.0f), 1.0f / 1.5f);
+    return std::max(0.0f, (1.0f - x) * 0.25f);
+}
+
+// after SoundCraft (crates/model/src/session.rs Session::add_bus)
+uint64_t addBus(Document& doc, const std::string& name, ChannelFormat format) {
+    Bus b;
+    b.numId = doc.busses.size() + 1;
+    for (const auto& ex : doc.busses) {
+        if (ex.numId >= b.numId) b.numId = ex.numId + 1;
+    }
+    b.name = name;
+    b.format = format;
+    doc.busses.push_back(std::move(b));
+    return doc.busses.back().numId;
+}
+
+const Bus* findBus(const Document& doc, uint64_t busId) {
+    for (const auto& b : doc.busses) {
+        if (b.numId == busId) return &b;
+    }
+    return nullptr;
+}
+
+const Bus* findBusByName(const Document& doc, const std::string& name) {
+    for (const auto& b : doc.busses) {
+        if (b.name == name) return &b;
+    }
+    return nullptr;
+}
+
 // after SoundCraft (crates/model/src/session.rs Session::add_track)
 uint64_t addTrack(Document& doc, TrackKind kind, ChannelFormat format, std::optional<std::string> name) {
     Track t;
@@ -1049,6 +1116,11 @@ uint64_t addTrack(Document& doc, TrackKind kind, ChannelFormat format, std::opti
     t.kind = kind;
     t.format = format;
     t.color = (kind == TrackKind::Master) ? std::array<uint8_t, 3>{140, 140, 140} : nextTrackColor(doc);
+    if (format == ChannelFormat::Mono) {
+        t.mixer.pan = {0.0f};
+    } else {
+        t.mixer.pan = {-1.0f, 1.0f};
+    }
     size_t pos = doc.tracks.size();
     if (kind != TrackKind::Master) {
         for (size_t i = 0; i < doc.tracks.size(); ++i) {

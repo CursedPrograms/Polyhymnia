@@ -1,5 +1,6 @@
 // Polyhymnia - mix clips to stereo (after SoundCraft crates/mix); no allocations in the audio callback.
 #pragma once
+#include "dsp.h"
 #include "session.h"
 
 #include <memory>
@@ -30,11 +31,17 @@ struct MixPlan {
         std::shared_ptr<const Buffer> audio;
         Peaks peaks;
     };
+    struct InsertSlot {
+        Session::Insert insert;
+        std::shared_ptr<Dsp::Plugin> plugin;
+    };
     struct TrackPlay {
         Session::Track track;
         std::vector<ClipPlay> clips;
+        std::vector<InsertSlot> inserts;
     };
     std::vector<TrackPlay> tracks;
+    std::vector<Session::Bus> busses;
     long long length = 0;
     double sampleRate = 48000;
     std::string missingNote;

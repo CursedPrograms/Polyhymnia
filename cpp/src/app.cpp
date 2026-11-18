@@ -11,6 +11,7 @@
 #include "import_audio.h"
 #include "lang.h"
 #include "mix.h"
+#include "mix_window.h"
 #include "playback.h"
 #include "project.h"
 #include "splash.h"
@@ -63,6 +64,7 @@ static Undo::History hist;
 static ImportAudio::Imports gImports;
 
 // Layout dock state (after SoundCraft crates/ui-egui/src/state.rs & edit_window.rs)
+static int gMainWindow = 0; // 0 = Edit, 1 = Mix
 static bool gShowLeftDock = true;
 static bool gShowRightDock = true;
 static float gLeftDockW = 190.0f;
@@ -878,10 +880,14 @@ static void drawMainMenuBar() {
     }
 
     if (ImGui::BeginMenu(T("View"))) {
+        if (ImGui::MenuItem(T("Narrow Mix"), "Ctrl+Alt+M", MixWindow::isNarrowMix())) {
+            MixWindow::toggleNarrowMix();
+        }
+        ImGui::Separator();
         ImGui::MenuItem(T("Tracks & Groups List"), nullptr, &gShowLeftDock);
         ImGui::MenuItem(T("Clips List"), nullptr, &gShowRightDock);
         ImGui::Separator();
-        if (ImGui::MenuItem(T("MIDI Editor"), "Ctrl+=", gLowerTab == 0)) gLowerTab = (gLowerTab == 0) ? -1 : 0;
+        if (ImGui::MenuItem(T("MIDI Editor"), nullptr, gLowerTab == 0)) gLowerTab = (gLowerTab == 0) ? -1 : 0;
         if (ImGui::MenuItem(T("Memory Locations"), nullptr, gLowerTab == 1)) gLowerTab = (gLowerTab == 1) ? -1 : 1;
         if (ImGui::MenuItem(T("Undo History"), nullptr, gLowerTab == 2)) gLowerTab = (gLowerTab == 2) ? -1 : 2;
         ImGui::EndMenu();
@@ -1006,7 +1012,9 @@ static void drawMainMenuBar() {
     }
 
     if (ImGui::BeginMenu(T("Window"))) {
-        ImGui::MenuItem(T("Edit"), "Ctrl+=", true);
+        if (ImGui::MenuItem(T("Edit"), "Ctrl+=", gMainWindow == 0)) gMainWindow = 0;
+        if (ImGui::MenuItem(T("Mix"), "Ctrl+=", gMainWindow == 1)) gMainWindow = 1;
+        ImGui::Separator();
         if (ImGui::MenuItem(T("Memory Locations"), nullptr, gLowerTab == 1)) gLowerTab = (gLowerTab == 1) ? -1 : 1;
         if (ImGui::MenuItem(T("Undo History"), nullptr, gLowerTab == 2)) gLowerTab = (gLowerTab == 2) ? -1 : 2;
         ImGui::Separator();
@@ -1014,9 +1022,9 @@ static void drawMainMenuBar() {
         ImGui::EndMenu();
     }
 
-    // Right-aligned "<Session Name> — Edit" label on menu bar (after menus.rs)
+    // Right-aligned "<Session Name> — Edit/Mix" label on menu bar (after menus.rs)
     if (hasDoc) {
-        const std::string rightTitle = doc.name + " \xe2\x80\x94 Edit";
+        const std::string rightTitle = doc.name + (gMainWindow == 1 ? "  \xe2\x80\x94  Mix" : " \xe2\x80\x94 Edit");
         const float tw = ImGui::CalcTextSize(rightTitle.c_str()).x;
         const float rx = ImGui::GetWindowWidth() - tw - 14.0f;
         if (rx > ImGui::GetCursorPosX() + 16.0f) {
@@ -1036,6 +1044,9 @@ void frame() {
     if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_N)) {
         openNewTracksDialog();
     }
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Equal)) {
+        gMainWindow = (gMainWindow == 0) ? 1 : 0;
+    }
     if (hasDoc) {
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
             if (io.KeyShift) redoDocument();
@@ -1052,7 +1063,7 @@ void frame() {
     drawMainMenuBar();
 
     const float menuH = ImGui::GetFrameHeight();
-    const float statusBarH = 24.0f;
+    const float statusBarH = (gMainWindow == 1) ? 0.0f : 24.0f;
     const float winW = io.DisplaySize.x;
     const float winH = io.DisplaySize.y - menuH - statusBarH;
 
@@ -1064,7 +1075,18 @@ void frame() {
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-    if (hasDoc) {
+    if (hasDoc && gMainWindow == 1) {
+        // Mix Window layout: Left TRACKS & GROUPS dock + Channel Strips (matching SoundCraft mix.png)
+        const float leftW = gShowLeftDock ? 168.0f : 0.0f;
+        const float centerW = std::max(160.0f, winW - leftW);
+        if (gShowLeftDock) {
+            drawLeftTracksAndGroupsDock(leftW);
+            ImGui::SameLine(0.0f, 0.0f);
+        }
+        ImGui::BeginChild("mix_center_col", ImVec2(centerW, 0), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        MixWindow::draw(doc);
+        ImGui::EndChild();
+    } else if (hasDoc) {
         // 1. Top Toolbar across full width
         Edit::drawToolbar(doc);
 
@@ -1121,48 +1143,50 @@ void frame() {
     ImGui::End();
     ImGui::PopStyleVar(2);
 
-    // Bottom Status & Tab Bar (MIDI EDITOR, MEMORY LOCATIONS, UNDO HISTORY + right status text)
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 3.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 2.0f));
-    ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - statusBarH));
-    ImGui::SetNextWindowSize(ImVec2(winW, statusBarH));
-    ImGui::Begin("sc_status_bar", nullptr,
-                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
-    ImDrawList* sdl = ImGui::GetWindowDrawList();
-    sdl->AddLine(ImVec2(0, io.DisplaySize.y - statusBarH), ImVec2(winW, io.DisplaySize.y - statusBarH), C_BORDER);
+    // Bottom Status & Tab Bar (in Edit window)
+    if (statusBarH > 0.0f) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 3.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 2.0f));
+        ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - statusBarH));
+        ImGui::SetNextWindowSize(ImVec2(winW, statusBarH));
+        ImGui::Begin("sc_status_bar", nullptr,
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
+        ImDrawList* sdl = ImGui::GetWindowDrawList();
+        sdl->AddLine(ImVec2(0, io.DisplaySize.y - statusBarH), ImVec2(winW, io.DisplaySize.y - statusBarH), C_BORDER);
 
-    auto tabBtn = [&](const char* label, int idx) {
-        const bool active = (gLowerTab == idx);
-        if (active) ImGui::PushStyleColor(ImGuiCol_Button, col4(C_BLUE));
-        if (ImGui::SmallButton(label)) {
-            gLowerTab = active ? -1 : idx;
+        auto tabBtn = [&](const char* label, int idx) {
+            const bool active = (gLowerTab == idx);
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, col4(C_BLUE));
+            if (ImGui::SmallButton(label)) {
+                gLowerTab = active ? -1 : idx;
+            }
+            if (active) ImGui::PopStyleColor();
+            ImGui::SameLine();
+        };
+        tabBtn("MIDI EDITOR", 0);
+        tabBtn("MEMORY LOCATIONS", 1);
+        tabBtn("UNDO HISTORY", 2);
+
+        if (!sessionNote.empty()) {
+            ImGui::SameLine(0.0f, 12.0f);
+            ImGui::TextColored(col4(C_DIM), "%s", sessionNote.c_str());
         }
-        if (active) ImGui::PopStyleColor();
-        ImGui::SameLine();
-    };
-    tabBtn("MIDI EDITOR", 0);
-    tabBtn("MEMORY LOCATIONS", 1);
-    tabBtn("UNDO HISTORY", 2);
 
-    if (!sessionNote.empty()) {
-        ImGui::SameLine(0.0f, 12.0f);
-        ImGui::TextColored(col4(C_DIM), "%s", sessionNote.c_str());
-    }
-
-    if (hasDoc) {
-        char rightStat[256];
-        std::snprintf(rightStat, sizeof(rightStat), "%s \xc2\xb7 %.0f Hz \xc2\xb7 %d-bit \xc2\xb7 %zu tracks",
-                      doc.name.c_str(), doc.sampleRate, doc.bitDepth, doc.tracks.size());
-        const float rw = ImGui::CalcTextSize(rightStat).x;
-        const float rx = winW - rw - 12.0f;
-        if (rx > ImGui::GetCursorPosX() + 12.0f) {
-            ImGui::SameLine(rx);
-            ImGui::TextColored(col4(C_DIM), "%s", rightStat);
+        if (hasDoc) {
+            char rightStat[256];
+            std::snprintf(rightStat, sizeof(rightStat), "%s \xc2\xb7 %.0f Hz \xc2\xb7 %d-bit \xc2\xb7 %zu tracks",
+                          doc.name.c_str(), doc.sampleRate, doc.bitDepth, doc.tracks.size());
+            const float rw = ImGui::CalcTextSize(rightStat).x;
+            const float rx = winW - rw - 12.0f;
+            if (rx > ImGui::GetCursorPosX() + 12.0f) {
+                ImGui::SameLine(rx);
+                ImGui::TextColored(col4(C_DIM), "%s", rightStat);
+            }
         }
+        ImGui::End();
+        ImGui::PopStyleVar(2);
     }
-    ImGui::End();
-    ImGui::PopStyleVar(2);
 
     // Floating dialogs & modals
     drawPrefs();
@@ -1173,6 +1197,7 @@ void frame() {
         Edit::drawModals(doc);
         Spot::draw(doc);
         ClipsPanel::drawDialogs(doc);
+        MixWindow::drawFloatingWindows(doc);
     }
     gImports.show();
 }
@@ -1243,6 +1268,8 @@ void script(const std::string& name) {
         return;
     }
     if (name == "edit") {
+        gMainWindow = 0;
+        MixWindow::closeAllPluginWindows();
         doc = Session::midnightGrooveDemo();
         doc.folder = prefDir;
         hasDoc = true;
@@ -1251,6 +1278,25 @@ void script(const std::string& name) {
         Playback::setDocument(&doc);
         fprintf(stderr, "edit: Midnight Groove demo session, %zu tracks, %zu sources, %zu markers\n",
                 doc.tracks.size(), doc.sources.size(), doc.markers.size());
+        return;
+    }
+    if (name == "mix") {
+        gMainWindow = 1;
+        MixWindow::closeAllPluginWindows();
+        doc = Session::midnightGrooveDemo();
+        doc.folder = prefDir;
+        hasDoc = true;
+        hist.clear();
+        // Match SoundCraft mix.png: Bass + Pad selected, Kick's EQ 7-Band window open on the right.
+        if (doc.tracks.size() >= 5) {
+            doc.sessionEdit.selectedTracks = {doc.tracks[3].numId, doc.tracks[4].numId};
+        }
+        if (!doc.tracks.empty()) {
+            MixWindow::openPluginWindow(doc.tracks[0].numId, 0);
+        }
+        Playback::setDocument(&doc);
+        fprintf(stderr, "mix: Midnight Groove mixer, %zu channel strips, %zu buses, Kick EQ 7-Band open\n",
+                doc.tracks.size(), doc.busses.size());
         return;
     }
     if (name == "fades_test") {

@@ -170,6 +170,75 @@ struct AutomationLane {
     float valueAt(long long at, float fallback) const;
 };
 
+// after SoundCraft (crates/model/src/mixer.rs INSERT_SLOTS, SEND_SLOTS, Bus, Route, Insert, SendSlot, Mixer)
+constexpr size_t kInsertSlots = 10;
+constexpr size_t kSendSlots = 10;
+
+struct Bus {
+    uint64_t numId = 1;
+    std::string name;
+    ChannelFormat format = ChannelFormat::Stereo;
+};
+
+struct Route {
+    enum class Kind { None, Main, Bus, Hardware };
+    Kind kind = Kind::None;
+    uint64_t busId = 0;
+    std::string hwName;
+
+    static Route none() { return {Kind::None, 0, {}}; }
+    static Route mainOut() { return {Kind::Main, 0, {}}; }
+    static Route bus(uint64_t id) { return {Kind::Bus, id, {}}; }
+    static Route hardware(std::string name) { return {Kind::Hardware, 0, std::move(name)}; }
+    bool operator==(const Route& o) const { return kind == o.kind && busId == o.busId && hwName == o.hwName; }
+    bool operator!=(const Route& o) const { return !(*this == o); }
+};
+
+struct Insert {
+    std::string plugin;
+    std::map<std::string, float> params;
+    bool bypass = false;
+    bool active = true;
+    std::string preset = "<factory default>";
+    std::optional<std::string> state;
+
+    static Insert make(std::string plugId) {
+        Insert ins;
+        ins.plugin = std::move(plugId);
+        return ins;
+    }
+};
+
+struct SendSlot {
+    Route target;
+    float levelDb = -144.0f;
+    float pan = 0.0f;
+    bool mute = false;
+    bool preFader = false;
+    bool followMainPan = true;
+
+    static SendSlot make(Route r, float db = -144.0f) {
+        SendSlot s;
+        s.target = std::move(r);
+        s.levelDb = db;
+        return s;
+    }
+};
+
+struct Mixer {
+    std::vector<float> pan = {0.0f};
+    Route input = Route::none();
+    Route output = Route::mainOut();
+    std::array<std::optional<Insert>, kInsertSlots> inserts{};
+    std::array<std::optional<SendSlot>, kSendSlots> sends{};
+    float trimDb = 0.0f;
+    bool soloSafe = false;
+    bool phaseInvert = false;
+};
+
+float faderPosToDb(float pos);
+float faderDbToPos(float db);
+
 struct Track {
     std::string id;
     uint64_t numId = 0;
@@ -189,6 +258,9 @@ struct Track {
     float heightPoints = 78.0f;
     std::string automationMode = "read";
     std::string insertsSummary;
+    std::string comments;
+    std::optional<Insert> instrument;
+    Mixer mixer;
     bool hidden = false;
     bool elastic = false;
     std::string folderParent;
@@ -348,6 +420,7 @@ struct Document {
     std::vector<Track> tracks;
     std::vector<Marker> markers;
     std::vector<Group> groups;
+    std::vector<Bus> busses;
     std::string folder;
     uint64_t nextClipId = 1;
     uint64_t nextTrackId = 1;
@@ -362,6 +435,9 @@ uint64_t allocId(Document& doc);
 std::array<uint8_t, 3> nextTrackColor(const Document& doc);
 std::string uniqueTrackName(const Document& doc, const std::string& base);
 uint64_t addTrack(Document& doc, TrackKind kind, ChannelFormat format, std::optional<std::string> name = std::nullopt);
+uint64_t addBus(Document& doc, const std::string& name, ChannelFormat format = ChannelFormat::Stereo);
+const Bus* findBus(const Document& doc, uint64_t busId);
+const Bus* findBusByName(const Document& doc, const std::string& name);
 Source* findSourceByNum(Document& doc, uint64_t numId);
 const Source* findSourceByNum(const Document& doc, uint64_t numId);
 std::vector<const Clip*> clipsUsing(const Document& doc, uint64_t sourceNumId);

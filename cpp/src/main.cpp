@@ -17,6 +17,7 @@ void registerCmdEditMoreTests();
 void registerCmdClipTests();
 void registerCmdClipMoreTests();
 void registerImportAudioTests();
+void registerMixDspTests();
 
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -182,6 +183,7 @@ int main(int argc, char** argv) {
         registerCmdClipTests();
         registerCmdClipMoreTests();
         registerImportAudioTests();
+        registerMixDspTests();
         registerTimeGridTests(); // after edit+clip so a grid crash does not block engine results
         return Test::runAll();
     }
@@ -203,6 +205,7 @@ int main(int argc, char** argv) {
             registerCmdClipTests();
             registerCmdClipMoreTests();
             registerImportAudioTests();
+            registerMixDspTests();
             registerTimeGridTests();
             return Test::runAll();
         }

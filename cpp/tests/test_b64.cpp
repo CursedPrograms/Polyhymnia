@@ -31,9 +31,21 @@ bool hostileBase64IsRejected() {
     return true;
 }
 
+// after SoundCraft (crates/model/src/b64.rs size_cap_counts_the_partial_quartet)
+bool base64DecodedSizeIsCapped() {
+    // At the maximum symbol count, this padded body still decodes to cap + 1 bytes.
+    // The decoded-size check must reject it even though the encoded-size precheck allows it.
+    const size_t maxSymbols = ((B64::kMaxDecodedBytes + 2) / 3) * 4;
+    std::string padded(maxSymbols - 1, 'A');
+    padded.push_back('=');
+    if (B64::decode(padded).has_value()) return false;
+    return !B64::decode(std::string(maxSymbols + 1, 'A')).has_value();
+}
+
 } // namespace
 
 void registerB64Tests() {
     Test::add("b64_rfc4648_vectors_round_trip", rfc4648VectorsRoundTrip);
     Test::add("b64_hostile_input_is_rejected", hostileBase64IsRejected);
+    Test::add("b64_size_cap_counts_the_partial_quartet", base64DecodedSizeIsCapped);
 }

@@ -8,3 +8,8 @@ cpp/external/miniaudio.h
 cpp/external/stb_vorbis.c
 *.bmp
 shot-test.bmp
+# Test and agent output
+cpp/build-codex/
+import_project/
+import_src/
+READY.txt

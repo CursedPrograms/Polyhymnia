@@ -1856,25 +1856,6 @@ void stopRecording(Session::Document& doc, std::string& statusOut) {
 
 void tickRecording(Session::Document& doc, std::string& statusOut) {
     if (!gIsRecording || !gRecorder) return;
-    // Synthesize a clean test input signal into the ring if no hardware capture callbacks have fired yet
-    // (e.g., on headless CI or machines without a microphone), so live waveform drawing and take recording work everywhere!
-    if (gRecorder->shared->beats.load(std::memory_order_relaxed) == 0 &&
-        gRecorder->shared->armed.load(std::memory_order_relaxed)) {
-        static double sPhase = 0.0;
-        const size_t nFrames = 512;
-        const size_t ch = std::max<size_t>(1, gRecorder->channels);
-        std::vector<float> synth(nFrames * ch);
-        for (size_t i = 0; i < nFrames; ++i) {
-            const float v = static_cast<float>(std::sin(sPhase) * 0.35);
-            sPhase += 2.0 * kPi * 220.0 / static_cast<double>(std::max<uint32_t>(1, gRecorder->sampleRate));
-            for (size_t c = 0; c < ch; ++c) synth[i * ch + c] = v;
-        }
-        size_t owed = 0;
-        gRecorder->monitor->push(synth);
-        gRecorder->shared->capture(synth.data(), synth.size(), owed);
-        gRecorder->seen = {gRecorder->shared->beats.load(std::memory_order_relaxed), std::chrono::steady_clock::now()};
-    }
-
     if (auto tr = gRecorder->trouble()) {
         stopRecording(doc, statusOut);
         statusOut = "Recording stopped: " + tr->message + ". The take is kept up to there.";

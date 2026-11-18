@@ -185,6 +185,36 @@ static bool testTakesStreamIntoTheirFiles() {
     return true;
 }
 
+// after SoundCraft (crates/playback/src/record.rs a_failed_write_is_trouble_while_still_recording)
+static bool testFailedTakeWriteIsReportedWhileRecording() {
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path(ec) / "polyhymnia-failed-take-test";
+    fs::remove_all(dir, ec);
+    auto [writer, error] = RecordBounce::TakeWriter::create(8, {0}, dir / "Take.wav", 48000);
+    EXPECT_TRUE(writer != nullptr);
+    writer->file.close(); // Force the next write through the writer's real stream-error path.
+
+    auto shared = std::make_shared<RecordBounce::SharedCapture>(64);
+    std::vector<std::unique_ptr<RecordBounce::TakeWriter>> writers;
+    writers.push_back(std::move(writer));
+    const float sample = 0.25f;
+    size_t owed = 0;
+    shared->capture(&sample, 1, owed);
+    shared->armed.store(false);
+    const auto result = RecordBounce::writeTakes(*shared, std::move(writers), 1);
+    EXPECT_TRUE(result.second.has_value());
+    EXPECT_TRUE(shared->failed.has_value());
+    auto monitor = std::make_shared<RecordBounce::InputRing>(1, 48000);
+    RecordBounce::Recorder recorder(shared, monitor, "Mic In", 48000, 1);
+    const auto trouble = recorder.trouble();
+    EXPECT_TRUE(trouble.has_value());
+    EXPECT_EQ(trouble->kind, RecordBounce::Trouble::Kind::Disk);
+    EXPECT_TRUE(trouble->message.find("Take.wav") != std::string::npos);
+    EXPECT_TRUE(!recorder.trouble().has_value()); // SoundCraft reports a write failure once.
+    fs::remove_all(dir, ec);
+    return true;
+}
+
 // after SoundCraft (crates/playback/src/record.rs a_take_sums_itself_up_for_drawing_while_it_records)
 static bool testATakeSumsItselfUpForDrawingWhileItRecords() {
     std::error_code ec;
@@ -593,6 +623,7 @@ void registerRecordBounceTests() {
     Test::add("record_nan_and_infinite_input_records_as_silence", testNanAndInfiniteInputRecordsAsSilence);
     Test::add("record_a_bug_a_stall_or_a_lost_device_is_trouble", testABugAStallOrALostDeviceIsTrouble);
     Test::add("record_takes_stream_into_their_files", testTakesStreamIntoTheirFiles);
+    Test::add("record_failed_write_is_reported_while_still_recording", testFailedTakeWriteIsReportedWhileRecording);
     Test::add("record_a_take_sums_itself_up_for_drawing_while_it_records", testATakeSumsItselfUpForDrawingWhileItRecords);
     Test::add("record_monitor_ring_rate_conversion_and_silence", testMonitorRingRateConversionAndSilence);
     Test::add("record_placement_loop_and_punch", testRecordingPlacementLoopAndPunch);

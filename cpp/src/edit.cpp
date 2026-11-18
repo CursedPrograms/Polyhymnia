@@ -11,6 +11,7 @@
 #include "lang.h"
 #include "mix.h"
 #include "playback.h"
+#include "record_bounce.h"
 #include "spot_dialog.h"
 #include "tempo.h"
 #include "time_format.h"
@@ -646,17 +647,27 @@ void drawToolbar(Session::Document& doc) {
         }
         ImGui::SameLine(0.0f, 2.0f);
         if (Icons::iconButton("tr_stop", tSz, "stop", false, "Stop (Space)", C_BLUE)) {
+            if (RecordBounce::isRecording()) {
+                std::string note;
+                RecordBounce::stopRecording(doc, note);
+            }
             Playback::stop();
         }
         ImGui::SameLine(0.0f, 2.0f);
         if (Icons::iconButton("tr_play", tSz, "play", Playback::isPlaying(), "Play (Space)", C_PLAY)) {
-            if (Playback::isPlaying()) Playback::stop();
-            else Playback::play();
+            if (RecordBounce::isRecording()) {
+                std::string note;
+                RecordBounce::stopRecording(doc, note);
+            } else if (Playback::isPlaying()) {
+                Playback::stop();
+            } else {
+                Playback::play();
+            }
         }
         ImGui::SameLine(0.0f, 2.0f);
-        static bool sRecArmedTransport = false;
-        if (Icons::iconButton("tr_rec", tSz, "record", sRecArmedTransport, "Record Enable (F12)", C_REC)) {
-            sRecArmedTransport = !sRecArmedTransport;
+        if (Icons::iconButton("tr_rec", tSz, "record", RecordBounce::isRecording(), "Record (F12 / Ctrl+Space)", C_REC)) {
+            std::string note;
+            RecordBounce::toggleRecording(doc, note);
         }
 
         // Bottom row: rtz, rewind, ffwd, end
@@ -1760,6 +1771,45 @@ void draw(Session::Document& doc, float bottomReserve) {
 
             dl->AddRect(ImVec2(visCx0, cy0), ImVec2(visCx1, cy1),
                         selected ? IM_COL32(255, 255, 255, 245) : IM_COL32(0, 0, 0, 180), 3.0f, 0, selected ? 1.8f : 1.0f);
+        }
+
+        // Live recording take preview on armed audio tracks (after edit_window.rs live_take)
+        if (RecordBounce::isRecording() && track.recordArm && track.kind == Session::TrackKind::Audio && !track.inactive) {
+            const long long recStart = RecordBounce::recordStartSample();
+            const long long recEnd = std::max(recStart + 2400LL, Playback::playhead());
+            const auto spanOpt = RecordBounce::liveSpan(recStart, std::nullopt, RecordBounce::recordPunchRange(), recEnd - recStart);
+            if (spanOpt.has_value()) {
+                const Time::Range span = spanOpt->second;
+                const float rx0 = std::max(laneX0, laneX0 + (float)((double)(span.start - visStart) / (double)gSamplesPerPixel));
+                const float rx1 = std::min(laneX1, laneX0 + (float)((double)(span.end - visStart) / (double)gSamplesPerPixel));
+                if (rx1 > rx0) {
+                    const float cy0 = rowY + 2.0f;
+                    const float cy1 = rowY + rowH - 3.0f;
+                    const float barH = std::min(15.0f, (cy1 - cy0) * 0.35f);
+                    dl->AddRectFilled(ImVec2(rx0, cy0), ImVec2(rx1, cy1), IM_COL32(0x7a, 0x1e, 0x1e, 225), 3.0f);
+                    dl->AddRectFilled(ImVec2(rx0, cy0), ImVec2(rx1, cy0 + barH), IM_COL32(0xa8, 0x24, 0x24, 245), 3.0f);
+                    dl->PushClipRect(ImVec2(rx0 + 3.0f, cy0), ImVec2(rx1 - 3.0f, cy0 + barH), true);
+                    dl->AddText(ImVec2(rx0 + 5.0f, cy0 + 1.0f), C_TEXT, (track.name + "_01 (recording)").c_str());
+                    dl->PopClipRect();
+
+                    if (auto lt = RecordBounce::currentLiveTake(track.numId); lt.has_value() && !lt->empty() && !(*lt)[0].empty()) {
+                        const auto& blocks = (*lt)[0];
+                        Mix::Peaks pk;
+                        pk.buckets = static_cast<int>(blocks.size());
+                        pk.minMax.resize(blocks.size() * 2);
+                        for (size_t bi = 0; bi < blocks.size(); ++bi) {
+                            pk.minMax[bi * 2] = blocks[bi].first;
+                            pk.minMax[bi * 2 + 1] = blocks[bi].second;
+                        }
+                        const float bodyTop = cy0 + barH + 1.0f;
+                        dl->PushClipRect(ImVec2(rx0 + 1.0f, bodyTop), ImVec2(rx1 - 1.0f, cy1 - 1.0f), true);
+                        drawWaveform(dl, ImVec2(rx0 + 2.0f, bodyTop), ImVec2(rx1 - 2.0f, cy1 - 2.0f),
+                                     pk, gWaveformScale, IM_COL32(255, 180, 180, 245), IM_COL32(235, 110, 110, 210));
+                        dl->PopClipRect();
+                    }
+                    dl->AddRect(ImVec2(rx0, cy0), ImVec2(rx1, cy1), C_REC, 3.0f, 0, 1.8f);
+                }
+            }
         }
 
         const bool isAutoView = (track.view == "volume" || track.view == "pan" || track.view == "mute")

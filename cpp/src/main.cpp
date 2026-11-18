@@ -18,6 +18,8 @@ void registerCmdClipTests();
 void registerCmdClipMoreTests();
 void registerImportAudioTests();
 void registerMixDspTests();
+void registerRecordBounceTests();
+void registerB64Tests();
 
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -184,6 +186,8 @@ int main(int argc, char** argv) {
         registerCmdClipMoreTests();
         registerImportAudioTests();
         registerMixDspTests();
+        registerRecordBounceTests();
+        registerB64Tests();
         registerTimeGridTests(); // after edit+clip so a grid crash does not block engine results
         return Test::runAll();
     }
@@ -206,6 +210,8 @@ int main(int argc, char** argv) {
             registerCmdClipMoreTests();
             registerImportAudioTests();
             registerMixDspTests();
+            registerRecordBounceTests();
+            registerB64Tests();
             registerTimeGridTests();
             return Test::runAll();
         }
@@ -240,6 +246,7 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;
+    ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
     loadFont();
 
     if (capture.empty()) {

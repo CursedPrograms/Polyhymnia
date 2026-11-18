@@ -14,6 +14,7 @@
 #include "mix_window.h"
 #include "playback.h"
 #include "project.h"
+#include "record_bounce.h"
 #include "splash.h"
 #include "spot_dialog.h"
 #include "time_format.h"
@@ -62,6 +63,29 @@ static std::string docPath;
 static std::string sessionNote;
 static Undo::History hist;
 static ImportAudio::Imports gImports;
+
+// after SoundCraft (crates/ui-egui/src/shortcuts.rs): this table supplies both menu labels and key dispatch.
+struct ShortcutDef { const char* id; const char* label; ImGuiKey key; bool ctrl, shift, alt; };
+static const ShortcutDef kShortcuts[] = {
+    {"new", "Ctrl+N", ImGuiKey_N, true, false, false}, {"save", "Ctrl+S", ImGuiKey_S, true, false, false},
+    {"undo", "Ctrl+Z", ImGuiKey_Z, true, false, false}, {"redo", "Ctrl+Shift+Z", ImGuiKey_Z, true, true, false},
+    {"cut", "Ctrl+X", ImGuiKey_X, true, false, false}, {"copy", "Ctrl+C", ImGuiKey_C, true, false, false},
+    {"paste", "Ctrl+V", ImGuiKey_V, true, false, false}, {"clear", "Del", ImGuiKey_Delete, false, false, false},
+    {"duplicate", "Ctrl+D", ImGuiKey_D, true, false, false}, {"separate", "Ctrl+E", ImGuiKey_E, true, false, false},
+    {"heal", "Ctrl+H", ImGuiKey_H, true, false, false}, {"mute", "Ctrl+M", ImGuiKey_M, true, false, false},
+    {"fades", "Ctrl+F", ImGuiKey_F, true, false, false}, {"fade_start", "Alt+D", ImGuiKey_D, false, false, true},
+    {"fade_end", "Alt+G", ImGuiKey_G, false, false, true}, {"loop", "Ctrl+Shift+L", ImGuiKey_L, true, true, false},
+    {"click", "K", ImGuiKey_K, false, false, false}, {"marker", "Enter", ImGuiKey_Enter, false, false, false},
+    {"import", "Ctrl+Shift+I", ImGuiKey_I, true, true, false}, {"new_tracks", "Ctrl+Shift+N", ImGuiKey_N, true, true, false},
+    {"bounce", "Ctrl+Alt+B", ImGuiKey_B, true, false, true}, {"export_clips", "Ctrl+Shift+K", ImGuiKey_K, true, true, false},
+    {"duplicate_track", "Alt+Shift+D", ImGuiKey_D, false, true, true}, {"group", "Ctrl+G", ImGuiKey_G, true, false, false},
+    {"narrow_mix", "Ctrl+Alt+M", ImGuiKey_M, true, false, true}, {"window", "Ctrl+=", ImGuiKey_Equal, true, false, false},
+    {"preferences", "Ctrl+,", ImGuiKey_Comma, true, false, false}, {"quit", "Alt+F4", ImGuiKey_F4, false, false, true}
+};
+static const char* shortcutLabel(const char* id) {
+    for (const auto& s : kShortcuts) if (std::strcmp(s.id, id) == 0) return s.label;
+    return nullptr;
+}
 
 // Layout dock state (after SoundCraft crates/ui-egui/src/state.rs & edit_window.rs)
 static int gMainWindow = 0; // 0 = Edit, 1 = Mix
@@ -812,26 +836,48 @@ static void drawMainMenuBar() {
     if (ImGui::BeginMenu("Polyhymnia")) {
         if (ImGui::MenuItem(T("About Polyhymnia"))) showAbout = true;
         ImGui::Separator();
-        if (ImGui::MenuItem(T("Preferences..."), "Ctrl+,")) showPrefs = true;
+        if (ImGui::MenuItem(T("Preferences..."), shortcutLabel("preferences"))) showPrefs = true;
         ImGui::Separator();
-        if (ImGui::MenuItem(T("Quit"), "Alt+F4")) quit = true;
+        if (ImGui::MenuItem(T("Quit"), shortcutLabel("quit"))) quit = true;
         ImGui::EndMenu();
     }
 
     if (ImGui::BeginMenu(T("File"))) {
-        if (ImGui::MenuItem(T("New Session..."), "Ctrl+N")) newDoc();
+        if (ImGui::MenuItem(T("New Session..."), shortcutLabel("new"))) newDoc();
         if (ImGui::MenuItem(T("Open Demo Session"), nullptr)) openDemoDoc();
-        if (ImGui::MenuItem(T("Save Session"), "Ctrl+S", false, hasDoc)) saveDoc();
+        if (ImGui::MenuItem(T("Save Session"), shortcutLabel("save"), false, hasDoc)) saveDoc();
         ImGui::Separator();
-        if (ImGui::MenuItem(T("Import Audio..."), "Ctrl+Shift+I")) openImportAudioDialog();
+        if (ImGui::MenuItem(T("Import Audio..."), shortcutLabel("import"))) openImportAudioDialog();
         if (ImGui::BeginMenu(T("Import"))) {
-            if (ImGui::MenuItem(T("Audio..."), "Ctrl+Shift+I")) openImportAudioDialog();
+            if (ImGui::MenuItem(T("Audio..."), shortcutLabel("import"))) openImportAudioDialog();
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem(T("Bounce Mix..."), shortcutLabel("bounce"), false, hasDoc)) {
+            RecordBounce::openBounceDialog(doc);
+        }
+        if (ImGui::MenuItem(T("Bounce Stems..."), nullptr, false, hasDoc)) {
+            const std::string stemsDir = (!doc.folder.empty() ? doc.folder : prefDir) + "/Bounced Stems";
+            RecordBounce::EncodeOptions opts;
+            opts.format = RecordBounce::EncodeFormat::Wav;
+            opts.bitDepth = RecordBounce::BitDepth::Int24;
+            Time::Range r = doc.sessionEdit.selection;
+            if (r.isEmpty()) r = {0, std::max<long long>(1, Mix::sessionLength(doc))};
+            auto [files, err] = RecordBounce::bounceStems(doc, stemsDir, r, opts, false);
+            sessionNote = err.empty() ? ("Bounced " + std::to_string(files.size()) + " stem(s) to " + stemsDir) : err;
+        }
+        if (ImGui::BeginMenu(T("Export"), hasDoc)) {
+            if (ImGui::MenuItem(T("Clips as Files..."), shortcutLabel("export_clips"))) {
+                const std::string expDir = (!doc.folder.empty() ? doc.folder : prefDir) + "/Exported Clips";
+                auto [n, err] = RecordBounce::exportClips(doc, doc.sessionEdit.selectedClips, expDir);
+                sessionNote = err.empty() ? ("Exported " + std::to_string(n) + " clip(s) to " + expDir) : err;
+            }
             ImGui::EndMenu();
         }
         ImGui::Separator();
         if (ImGui::MenuItem(T("Preferences..."))) showPrefs = true;
         ImGui::Separator();
-        if (ImGui::MenuItem(T("Quit"), "Alt+F4")) quit = true;
+        if (ImGui::MenuItem(T("Quit"), shortcutLabel("quit"))) quit = true;
         ImGui::EndMenu();
     }
 
@@ -842,33 +888,33 @@ static void drawMainMenuBar() {
                 mutateDocument(label, [&](Session::Document& d) { fn(d); });
             }
         };
-        if (ImGui::MenuItem(T("Undo"), "Ctrl+Z", false, hasDoc && hist.canUndo())) undoDocument();
-        if (ImGui::MenuItem(T("Redo"), "Ctrl+Shift+Z", false, hasDoc && hist.canRedo())) redoDocument();
+        if (ImGui::MenuItem(T("Undo"), shortcutLabel("undo"), false, hasDoc && hist.canUndo())) undoDocument();
+        if (ImGui::MenuItem(T("Redo"), shortcutLabel("redo"), false, hasDoc && hist.canRedo())) redoDocument();
         ImGui::Separator();
-        run("Cut", "Ctrl+X", Editor::cut);
-        if (ImGui::MenuItem(T("Copy"), "Ctrl+C", false, hasDoc)) Editor::copy(doc);
-        run("Paste", "Ctrl+V", [](Session::Document& d) { Editor::paste(d, Playback::playhead(), Editor::selection().trackId); });
-        run("Clear", "Del", [](Session::Document& d) {
+        run("Cut", shortcutLabel("cut"), Editor::cut);
+        if (ImGui::MenuItem(T("Copy"), shortcutLabel("copy"), false, hasDoc)) Editor::copy(doc);
+        run("Paste", shortcutLabel("paste"), [](Session::Document& d) { Editor::paste(d, Playback::playhead(), Editor::selection().trackId); });
+        run("Clear", shortcutLabel("clear"), [](Session::Document& d) {
             EngCmd::Engine e;
             e.doc = std::move(d);
             e.execute("edit.clear", {});
             d = std::move(e.doc);
         });
-        run("Duplicate", "Ctrl+D", Editor::duplicateSelection);
+        run("Duplicate", shortcutLabel("duplicate"), Editor::duplicateSelection);
         ImGui::Separator();
-        run("Separate Clip at Selection", "Ctrl+E", [](Session::Document& d) { Editor::separateAtPlayhead(d, Playback::playhead()); });
-        run("Heal Separation", "Ctrl+H", Editor::healSeparation);
+        run("Separate Clip at Selection", shortcutLabel("separate"), [](Session::Document& d) { Editor::separateAtPlayhead(d, Playback::playhead()); });
+        run("Heal Separation", shortcutLabel("heal"), Editor::healSeparation);
         run("Consolidate Clip", "Alt+Shift+3", Editor::consolidateSelection);
         ImGui::Separator();
         if (ImGui::BeginMenu(T("Fades"))) {
-            if (ImGui::MenuItem(T("Create..."), "Ctrl+F", false, hasDoc)) Edit::openFadesDialog();
-            run("Fade to Start", "Alt+D", [](Session::Document& d) {
+            if (ImGui::MenuItem(T("Create..."), shortcutLabel("fades"), false, hasDoc)) Edit::openFadesDialog();
+            run("Fade to Start", shortcutLabel("fade_start"), [](Session::Document& d) {
                 EngCmd::Engine e;
                 e.doc = std::move(d);
                 e.execute("edit.fade_to_start", {});
                 d = std::move(e.doc);
             });
-            run("Fade to End", "Alt+G", [](Session::Document& d) {
+            run("Fade to End", shortcutLabel("fade_end"), [](Session::Document& d) {
                 EngCmd::Engine e;
                 e.doc = std::move(d);
                 e.execute("edit.fade_to_end", {});
@@ -979,9 +1025,9 @@ static void drawMainMenuBar() {
     }
 
     if (ImGui::BeginMenu(T("Options"))) {
-        if (ImGui::MenuItem(T("Loop Playback"), "Ctrl+Shift+L", Playback::loopEnabled())) Playback::toggleLoop();
+        if (ImGui::MenuItem(T("Loop Playback"), shortcutLabel("loop"), Playback::loopEnabled())) Playback::toggleLoop();
         if (hasDoc) {
-            ImGui::MenuItem(T("Metronome Click"), "K", &doc.click);
+            ImGui::MenuItem(T("Metronome Click"), shortcutLabel("click"), &doc.click);
             ImGui::MenuItem(T("Count Off"), nullptr, &doc.countoff);
             ImGui::Separator();
             auto menuFlag = [&](const char* label, const char* key, const char* sc = nullptr, bool def = false) {
@@ -1036,25 +1082,81 @@ static void drawMainMenuBar() {
     ImGui::EndMainMenuBar();
 }
 
+// after SoundCraft (crates/ui-egui/src/shortcuts.rs): dispatch before any menu or widget gets the key.
+static void handleGlobalShortcuts() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) return;
+    const bool ctrl = io.KeyCtrl, shift = io.KeyShift, alt = io.KeyAlt;
+    // Dispatch the same chords shown in menus even when no menu is open.
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false) && !shift) { newDoc(); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Comma, false)) { showPrefs = true; return; }
+    if (alt && ImGui::IsKeyPressed(ImGuiKey_F4, false)) { quit = true; return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_G, false) && hasDoc) {
+        mutateDocument("Group", [](Session::Document& d) {
+            Session::Group g;
+            g.numId = static_cast<uint64_t>(d.groups.size() + 1);
+            g.letter = static_cast<char>('a' + (d.groups.size() % 26));
+            g.name = std::string("Group ") + g.letter;
+            d.groups.push_back(std::move(g));
+        });
+        return;
+    }
+    if (alt && shift && ImGui::IsKeyPressed(ImGuiKey_D, false) && hasDoc) {
+        mutateDocument("Duplicate Track", [](Session::Document& d) {
+            if (d.sessionEdit.selectedTracks.empty()) return;
+            const uint64_t id = d.sessionEdit.selectedTracks.front();
+            auto it = std::find_if(d.tracks.begin(), d.tracks.end(), [id](const Session::Track& t) { return t.numId == id; });
+            if (it == d.tracks.end()) return;
+            Session::Track copy = *it;
+            copy.numId = Session::allocId(d);
+            copy.id = "t" + std::to_string(copy.numId);
+            copy.name += " Copy";
+            d.tracks.insert(std::next(it), std::move(copy));
+        });
+        return;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Space, false) && !ctrl && !alt) {
+        if (Playback::isPlaying()) Playback::stop(); else Playback::play();
+        return;
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Equal, false)) { gMainWindow = gMainWindow == 0 ? 1 : 0; return; }
+    if (alt && ImGui::IsKeyPressed(ImGuiKey_F4, false)) { quit = true; return; }
+    if (ctrl && alt && ImGui::IsKeyPressed(ImGuiKey_B, false) && hasDoc) { RecordBounce::openBounceDialog(doc); return; }
+    if (ImGui::IsKeyPressed(ImGuiKey_F12, false) && hasDoc) { RecordBounce::toggleRecording(doc, sessionNote); return; }
+    if (!hasDoc) {
+        if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_I, false)) openImportAudioDialog();
+        else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) newDoc();
+        return;
+    }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) { if (shift) redoDocument(); else undoDocument(); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) { mutateDocument("Duplicate", [](Session::Document& d) { Editor::duplicateSelection(d); }); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_E, false)) { mutateDocument("Separate", [](Session::Document& d) { Editor::separateAtPlayhead(d, Playback::playhead()); }); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_X, false)) { mutateDocument("Cut", Editor::cut); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) { Editor::copy(doc); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_V, false)) { mutateDocument("Paste", [](Session::Document& d) { Editor::paste(d, Playback::playhead(), Editor::selection().trackId); }); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_H, false)) { mutateDocument("Heal Separation", Editor::healSeparation); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_M, false) && !alt) { mutateDocument("Mute Clips", [](Session::Document& d) { EngCmd::Engine e; e.doc = std::move(d); e.execute("clip.mute_toggle", {}); d = std::move(e.doc); }); return; }
+    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_L, false)) { Playback::toggleLoop(); return; }
+    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_I, false)) { openImportAudioDialog(); return; }
+    if (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_N, false)) { openNewTracksDialog(); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) { saveDoc(); return; }
+    if (ctrl && alt && ImGui::IsKeyPressed(ImGuiKey_M, false)) { MixWindow::toggleNarrowMix(); return; }
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) { Edit::openFadesDialog(); return; }
+    if (alt && ImGui::IsKeyPressed(ImGuiKey_D, false)) { mutateDocument("Fade to Start", [](Session::Document& d) { EngCmd::Engine e; e.doc = std::move(d); e.execute("edit.fade_to_start", {}); d = std::move(e.doc); }); return; }
+    if (alt && ImGui::IsKeyPressed(ImGuiKey_G, false)) { mutateDocument("Fade to End", [](Session::Document& d) { EngCmd::Engine e; e.doc = std::move(d); e.execute("edit.fade_to_end", {}); d = std::move(e.doc); }); return; }
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !ctrl && !alt && !shift) {
+        mutateDocument("Add Marker", [](Session::Document& d) { Session::Marker m; m.number = static_cast<unsigned>(d.markers.size() + 1); m.id = "m" + std::to_string(m.number); m.name = "Marker " + std::to_string(m.number); m.start = Playback::playhead(); d.markers.push_back(std::move(m)); }); return;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !ctrl && !alt) { mutateDocument("Clear", [](Session::Document& d) { EngCmd::Engine e; e.doc = std::move(d); e.execute("edit.clear", {}); d = std::move(e.doc); }); return; }
+    if (ImGui::IsKeyPressed(ImGuiKey_F12, false) || (ctrl && ImGui::IsKeyPressed(ImGuiKey_Space, false))) RecordBounce::toggleRecording(doc, sessionNote);
+}
+
 void frame() {
+    handleGlobalShortcuts();
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_I)) {
-        openImportAudioDialog();
-    }
-    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_N)) {
-        openNewTracksDialog();
-    }
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Equal)) {
-        gMainWindow = (gMainWindow == 0) ? 1 : 0;
-    }
     if (hasDoc) {
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-            if (io.KeyShift) redoDocument();
-            else undoDocument();
-        }
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F)) {
-            Edit::openFadesDialog();
-        }
+        RecordBounce::tickRecording(doc, sessionNote);
+        RecordBounce::stepBounceUi(sessionNote);
         Playback::setDocument(&doc);
         const auto plan = Mix::currentPlan();
         if (plan && !plan->missingNote.empty() && sessionNote.empty()) sessionNote = plan->missingNote;
@@ -1198,6 +1300,7 @@ void frame() {
         Spot::draw(doc);
         ClipsPanel::drawDialogs(doc);
         MixWindow::drawFloatingWindows(doc);
+        RecordBounce::drawBounceUi(doc, sessionNote);
     }
     gImports.show();
 }
@@ -1234,6 +1337,37 @@ void script(const std::string& name) {
         Playback::toggleLoop();
         Playback::play();
         fprintf(stderr, "playback: playing demo, loop %s, %zu tracks\n", Playback::loopEnabled() ? "on" : "off", doc.tracks.size());
+        return;
+    }
+    if (name == "shortcuts") {
+        doc = Session::demo();
+        hasDoc = true;
+        hist.clear();
+        Playback::setDocument(&doc);
+        if (!doc.tracks.empty() && !doc.tracks.front().clips.empty()) {
+            const auto& tr = doc.tracks.front();
+            Editor::selectClip(doc, tr.id, tr.clips.front().id);
+        }
+        Playback::stop();
+        Playback::play();
+        const bool started = Playback::isPlaying();
+        Playback::stop();
+        const size_t beforeDuplicate = doc.tracks.empty() ? 0 : doc.tracks.front().clips.size();
+        if (hasDoc) mutateDocument("Shortcut duplicate", [](Session::Document& d) { Editor::duplicateSelection(d); });
+        const size_t afterDuplicate = doc.tracks.empty() ? 0 : doc.tracks.front().clips.size();
+        if (!doc.tracks.empty() && !doc.tracks.front().clips.empty()) {
+            const auto& clip = doc.tracks.front().clips.front();
+            Playback::setPlayhead(clip.start + clip.length / 2);
+        }
+        if (hasDoc) mutateDocument("Shortcut separate", [](Session::Document& d) { Editor::separateAtPlayhead(d, Playback::playhead()); });
+        const size_t afterSeparate = doc.tracks.empty() ? 0 : doc.tracks.front().clips.size();
+        const bool undoWorked = undoDocument();
+        const size_t afterUndo = doc.tracks.empty() ? 0 : doc.tracks.front().clips.size();
+        fprintf(stderr, "shortcuts: Space %s, Ctrl+D %s, Ctrl+E %s, Ctrl+Z %s\n",
+                started && !Playback::isPlaying() ? "play/stop ok" : "FAILED",
+                afterDuplicate > beforeDuplicate ? "duplicate ok" : "FAILED",
+                afterSeparate > afterDuplicate ? "separate ok" : "FAILED",
+                undoWorked && afterUndo == afterDuplicate ? "undo ok" : "FAILED");
         return;
     }
     if (name == "editing") {
@@ -1371,6 +1505,52 @@ void script(const std::string& name) {
         Playback::setDocument(&doc);
         fprintf(stderr, "import: %zu sources in Clips list, %zu tracks, Audio Files copied\n",
                 doc.sources.size(), doc.tracks.size());
+        return;
+    }
+    if (name == "record") {
+        gMainWindow = 0;
+        MixWindow::closeAllPluginWindows();
+        doc = Session::midnightGrooveDemo();
+        doc.folder = prefDir + "record_project";
+        std::filesystem::create_directories(doc.folder);
+        hasDoc = true;
+        hist.clear();
+        // Add a dedicated Vocal take track at the top, arm it + input monitor it, and start recording at bar 3!
+        Session::Track vox;
+        vox.id = "t_vox";
+        vox.numId = Session::allocId(doc);
+        vox.name = "Vocal";
+        vox.kind = Session::TrackKind::Audio;
+        vox.format = Session::ChannelFormat::Mono;
+        vox.color = {230, 68, 68};
+        vox.recordArm = true;
+        vox.inputMonitor = true;
+        vox.mixer.input = Session::Route::hardware("In 1");
+        doc.tracks.insert(doc.tracks.begin(), vox);
+        doc.sessionEdit.selectedTracks = {vox.numId};
+        doc.sessionEdit.selection = {96000, 288000};
+        Edit::scriptSetup(doc);
+        Playback::setDocument(&doc);
+        RecordBounce::toggleRecording(doc, sessionNote);
+        for (int i = 0; i < 16; ++i) {
+            RecordBounce::tickRecording(doc, sessionNote);
+        }
+        Playback::setPlayhead(216000);
+        fprintf(stderr, "record: armed Vocal track (In 1), recording live take at bar 2..4 (%s)\n", sessionNote.c_str());
+        return;
+    }
+    if (name == "bounce") {
+        gMainWindow = 0;
+        MixWindow::closeAllPluginWindows();
+        doc = Session::midnightGrooveDemo();
+        doc.folder = prefDir + "bounce_project";
+        std::filesystem::create_directories(doc.folder);
+        hasDoc = true;
+        hist.clear();
+        Edit::scriptSetup(doc);
+        Playback::setDocument(&doc);
+        RecordBounce::openBounceDialog(doc);
+        fprintf(stderr, "bounce: Bounce Mix dialog open on Midnight Groove (%zu tracks)\n", doc.tracks.size());
         return;
     }
 }

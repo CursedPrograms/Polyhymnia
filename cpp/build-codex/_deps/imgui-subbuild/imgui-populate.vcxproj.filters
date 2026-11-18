@@ -1,0 +1,44 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\572ff2ce1971f89e6c9d8d1817d85a4a\imgui-populate-mkdir.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\572ff2ce1971f89e6c9d8d1817d85a4a\imgui-populate-download.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\572ff2ce1971f89e6c9d8d1817d85a4a\imgui-populate-update.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\572ff2ce1971f89e6c9d8d1817d85a4a\imgui-populate-patch.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\572ff2ce1971f89e6c9d8d1817d85a4a\imgui-populate-configure.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\572ff2ce1971f89e6c9d8d1817d85a4a\imgui-populate-build.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\572ff2ce1971f89e6c9d8d1817d85a4a\imgui-populate-install.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\572ff2ce1971f89e6c9d8d1817d85a4a\imgui-populate-test.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\cbce91245021e4a11d4309fd5c611ed6\imgui-populate-complete.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\af87abd49d8c6f92884f1caf0b202df1\imgui-populate.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="D:\cc\Polyhymnia\cpp\build-codex\_deps\imgui-subbuild\CMakeFiles\imgui-populate" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{C9E329FD-3335-30D4-99E4-D2E543182AF5}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

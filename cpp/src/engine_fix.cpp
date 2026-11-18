@@ -5,6 +5,7 @@
 #include "engine_edit.h"
 #include "import_audio.h"
 #include "project.h"
+#include "record_bounce.h"
 
 #include <algorithm>
 #include <cmath>
@@ -485,7 +486,7 @@ Result Engine::execute(const char* cmd, const Engine::Params& p) {
 }
 
 Result Engine::dispatch(const char* cmd, const Engine::Params& p) {
-    const auto bad = [&](const char* msg) { return Result::err(msg); };
+    const auto bad = [&](const std::string& msg) { return Result::err(msg); };
 
     if (std::strcmp(cmd, "track.new") == 0) {
         const int count = static_cast<int>(p.numOr("count", 1));
@@ -1708,6 +1709,135 @@ Result Engine::dispatch(const char* cmd, const Engine::Params& p) {
             }
         }
         return Result::num("rendered", 1);
+    }
+
+    if (std::strcmp(cmd, "track.input") == 0) {
+        const std::string inName = p.str("input").value_or("none");
+        for (uint64_t tid : trackNums(*this, p)) {
+            if (Session::Track* t = Session::findTrackByNum(doc, tid)) {
+                if (inName == "none") {
+                    t->mixer.input = Session::Route::none();
+                } else if (const Session::Bus* b = Session::findBusByName(doc, inName)) {
+                    t->mixer.input = Session::Route::bus(b->numId);
+                } else {
+                    t->mixer.input = Session::Route::hardware(inName);
+                }
+            }
+        }
+        Result result; result.ok = true; return result;
+    }
+
+    if (std::strcmp(cmd, "track.output") == 0) {
+        const std::string outName = p.str("output").value_or("main");
+        for (uint64_t tid : trackNums(*this, p)) {
+            if (Session::Track* t = Session::findTrackByNum(doc, tid)) {
+                if (outName == "none") {
+                    t->mixer.output = Session::Route::none();
+                } else if (outName == "main") {
+                    t->mixer.output = Session::Route::mainOut();
+                } else if (const Session::Bus* b = Session::findBusByName(doc, outName)) {
+                    t->mixer.output = Session::Route::bus(b->numId);
+                } else {
+                    t->mixer.output = Session::Route::hardware(outName);
+                }
+            }
+        }
+        Result result; result.ok = true; return result;
+    }
+
+    if (std::strcmp(cmd, "mix.record_arm") == 0) {
+        const bool val = p.boolean("value").value_or(true);
+        for (uint64_t tid : trackNums(*this, p)) {
+            if (Session::Track* t = Session::findTrackByNum(doc, tid)) {
+                t->recordArm = val;
+            }
+        }
+        Result result; result.ok = true; return result;
+    }
+
+    if (std::strcmp(cmd, "file.bounce_mix") == 0) {
+        const auto pathOpt = p.str("path");
+        if (!pathOpt || pathOpt->empty()) return bad("`path` required");
+        Time::Range r = rangeParam(*this, p);
+        if (r.isEmpty()) r = {0, std::max<long long>(1, Session::contentEnd(doc))};
+        const std::filesystem::path fpath = std::filesystem::u8path(*pathOpt);
+        const std::string ext = fpath.extension().u8string();
+        const std::string fmtName = p.str("format").value_or(ext);
+        const auto fmtOpt = RecordBounce::encodeFormatFor(fmtName);
+        if (!fmtOpt.has_value()) {
+            return bad("cannot write `" + fmtName + "` files (supported: wav, aiff, flac, mp3)");
+        }
+        RecordBounce::EncodeOptions opts;
+        opts.format = *fmtOpt;
+        const std::string bitStr = p.str("bit_depth").value_or("24");
+        if (bitStr == "16") opts.bitDepth = RecordBounce::BitDepth::Int16;
+        else if (bitStr == "32" || bitStr == "32f") opts.bitDepth = RecordBounce::BitDepth::Float32;
+        else opts.bitDepth = RecordBounce::BitDepth::Int24;
+        opts.dither = p.boolean("dither").value_or(true);
+
+        std::optional<uint64_t> busId;
+        if (auto srcName = p.str("source")) {
+            if (!srcName->empty() && *srcName != "main" && *srcName != "Main") {
+                const Session::Bus* b = Session::findBusByName(doc, *srcName);
+                if (!b) {
+                    std::string wanted = *srcName;
+                    std::transform(wanted.begin(), wanted.end(), wanted.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    for (const auto& candidate : doc.busses) {
+                        std::string name = candidate.name;
+                        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                        if (name == wanted) { b = &candidate; break; }
+                    }
+                }
+                if (!b) return bad("unknown bus `" + *srcName + "`");
+                busId = b->numId;
+            }
+        }
+        const bool normalize = p.boolean("normalize").value_or(false);
+        auto [job, err] = RecordBounce::Bounce::create(doc, fpath, r, opts, busId, normalize, false);
+        if (!job) return bad(err);
+        auto [done, runErr] = job->run();
+        if (!done.has_value()) return bad(runErr);
+        Result res; res.ok = true;
+        res.nums["bytes"] = static_cast<double>(done->bytes);
+        res.nums["peak_db"] = static_cast<double>(done->peakDb);
+        res.nums["lufs"] = static_cast<double>(done->lufs);
+        res.nums["true_peak_db"] = static_cast<double>(done->truePeakDb);
+        return res;
+    }
+
+    if (std::strcmp(cmd, "file.bounce_stems") == 0) {
+        const auto dirOpt = p.str("dir");
+        if (!dirOpt || dirOpt->empty()) return bad("`dir` required");
+        if (p.has("format") && !p.str("format").has_value()) {
+            return bad("`format` must be a string");
+        }
+        const std::string fmtName = p.str("format").value_or("wav");
+        const auto fmtOpt = RecordBounce::encodeFormatFor(fmtName);
+        if (!fmtOpt.has_value()) {
+            return bad("cannot write `" + fmtName + "` files (supported: wav, aiff, flac, mp3)");
+        }
+        RecordBounce::EncodeOptions opts;
+        opts.format = *fmtOpt;
+        const std::string bitStr = p.str("bit_depth").value_or("24");
+        if (bitStr == "16") opts.bitDepth = RecordBounce::BitDepth::Int16;
+        else if (bitStr == "32" || bitStr == "32f") opts.bitDepth = RecordBounce::BitDepth::Float32;
+        else opts.bitDepth = RecordBounce::BitDepth::Int24;
+        opts.dither = p.boolean("dither").value_or(true);
+        Time::Range r = rangeParam(*this, p);
+        if (r.isEmpty()) r = {0, std::max<long long>(1, Session::contentEnd(doc))};
+        auto [files, err] = RecordBounce::bounceStems(doc, *dirOpt, r, opts, false);
+        if (!err.empty()) return bad(err);
+        return Result::num("files", static_cast<double>(files.size()));
+    }
+
+    if (std::strcmp(cmd, "file.export_clips") == 0) {
+        const auto dirOpt = p.str("dir");
+        if (!dirOpt || dirOpt->empty()) return bad("`dir` required");
+        const auto ids = clipIds(*this, p);
+        if (ids.empty()) return bad("no clips selected");
+        auto [written, err] = RecordBounce::exportClips(doc, ids, *dirOpt);
+        if (!err.empty()) return bad(err);
+        return Result::num("written", static_cast<double>(written));
     }
 
     return Result::err(std::string("unknown command ") + cmd);

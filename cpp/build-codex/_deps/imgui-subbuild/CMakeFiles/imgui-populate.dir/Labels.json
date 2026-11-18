@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/imgui-populate"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/af87abd49d8c6f92884f1caf0b202df1/imgui-populate.rule"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/cbce91245021e4a11d4309fd5c611ed6/imgui-populate-complete.rule"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/572ff2ce1971f89e6c9d8d1817d85a4a/imgui-populate-build.rule"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/572ff2ce1971f89e6c9d8d1817d85a4a/imgui-populate-configure.rule"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/572ff2ce1971f89e6c9d8d1817d85a4a/imgui-populate-download.rule"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/572ff2ce1971f89e6c9d8d1817d85a4a/imgui-populate-install.rule"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/572ff2ce1971f89e6c9d8d1817d85a4a/imgui-populate-mkdir.rule"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/572ff2ce1971f89e6c9d8d1817d85a4a/imgui-populate-patch.rule"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/572ff2ce1971f89e6c9d8d1817d85a4a/imgui-populate-test.rule"
+		},
+		{
+			"file" : "D:/cc/Polyhymnia/cpp/build-codex/_deps/imgui-subbuild/CMakeFiles/572ff2ce1971f89e6c9d8d1817d85a4a/imgui-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"imgui-populate"
+		],
+		"name" : "imgui-populate"
+	}
+}

@@ -1,2 +1,0 @@
-﻿
-READY: Recording ring/input monitor, take WAV writer, punch/loop placement, WAV/FLAC/MP3 bounce, stem and clip export are wired; SoundCraft base64 encode/decode is included. Build succeeds, all 190 selftests pass, and edit/import/mix/shortcuts capture scripts pass.

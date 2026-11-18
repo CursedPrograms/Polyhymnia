@@ -22,10 +22,10 @@
 
 # Polyhymnia
 
-**Music studio (DAW) for arranging and mixing.** Polyhymnia is Atelier's Pro Tools-style editor: an Edit window with
-tracks, clips and waveforms, and a Mix window on the way. Part of
-**[Atelier](https://github.com/CursedPrograms/Atelier)**. C++ port of ideas from
-**[SoundCraft](https://github.com/CursedPrograms/soundcraft)** (Rust, MIT OR Apache-2.0).
+**Music studio (DAW) for arranging and mixing.** Polyhymnia is Atelier's Pro Tools-style studio: an Edit window with
+tracks, clips and waveforms, a Mix window with channel strips and built-in effects, recording and bounce. Part of
+**[Atelier](https://github.com/CursedPrograms/Atelier)**. A C++ port of
+**[SoundCraft](https://github.com/CursedPrograms/soundcraft)** (Rust, MIT OR Apache-2.0), ported with its tests.
 **[Website](https://cursedprograms.github.io/Polyhymnia/)**
 
 ![Polyhymnia Edit window with the Midnight Groove demo session: toolbar, tracks, rulers, clips and the Clips list](images/window.jpg)
@@ -34,15 +34,21 @@ tracks, clips and waveforms, and a Mix window on the way. Part of
 
 ## What works so far
 
-| Phase | Feature |
+| Part | What you can do |
 | --- | --- |
-| 1 | CMake skeleton, SDL2 + OpenGL 3 + Dear ImGui, splash, 12 languages, miniaudio output device and Preferences picker |
-| 2 | Session model: tracks, clips, markers, tempo and meter, `.polyhymnia` save/load |
-| 3 | Playback and mix: gain, pan, mute, solo, real WAV/FLAC/MP3 decode, offline `--render`, `--audiotest` |
-| 4 | Edit window: bars/beats and min:sec rulers, track lanes, clip waveforms, playhead, zoom and scroll |
-| 5 | Editing: Shuffle/Slip/Spot/Grid modes, Smart/Selector/Grabber/Trim tools, cut/copy/paste/duplicate/separate/heal/consolidate/nudge, clip gain and five fade shapes in the mix, undo/redo |
+| **Import** | File > Import Audio (Ctrl+Shift+I): WAV, FLAC, MP3, AIFF, OGG, several at once; drag and drop from Explorer onto a track, empty space or the Clips list; files are copied into the project's Audio Files folder |
+| **Edit window** | SoundCraft's layout and icons: the toolbar (Shuffle / Spot / Slip / Grid, the edit tools, counter, Grid and Nudge, transport, tempo and meter), Tracks and Groups lists, the Clips list, Bars\|Beats, Min:Secs, Tempo, Meter and Markers rulers, track headers (record, input, solo, mute, view, automation, volume, pan), coloured clips with waveforms and MIDI notes |
+| **Editing** | Shuffle, Slip, Spot and Grid; cut, copy, paste, clear, duplicate, separate, heal, consolidate, nudge; fades in five shapes and crossfades; clip gain; undo and redo |
+| **Mix window** | A channel strip per track: inserts, sends, I/O routing, automation mode, pan, input, record, solo, mute, fader and meters; busses and the master |
+| **Built-in effects** | EQ 7-band, compressor, chorus, reverb (plate), limiter and more, each setting a slider |
+| **Recording** | Arm tracks, input monitoring, takes written as WAV, punch and loop recording |
+| **Bounce and export** | Mixdown to WAV, FLAC or MP3; stems and clips as files |
+| **Keyboard** | Space plays and stops; the menu shortcuts work with the menus closed and take priority over the window, except while typing in a field |
+| **Time** | Exact sample maths, tempo map, bars and beats, timecode, feet and frames, the grid |
+| **Demo** | Opens with SoundCraft's *Midnight Groove* session to try everything |
 
-Spot mode nudges source offset; Shuffle ripples later clips. Grabber is click-to-select (no drag yet). Consolidate extends the selected clip to the edit range—not yet a full bounce-to-file.
+**On the way:** ASIO, VST3 and CLAP plugins with the free Octavia plugins (SafetyPin, Fuzz14, stringtuner), the rest of
+SoundCraft's shortcuts, automation, MIDI and the piano roll, video scoring.
 
 ## Minimum requirements
 
@@ -78,7 +84,7 @@ Install shortcuts: `install.bat` beside the built tree (copies to `dist\Polyhymn
 
 ## Credits
 
-- **[SoundCraft](https://github.com/CursedPrograms/soundcraft)** — session model, mix and UI ideas (MIT OR Apache-2.0)
+- **[SoundCraft](https://github.com/CursedPrograms/soundcraft)** — ported to C++: session model, editing, mixer, effects, recording, bounce, layout and icons (MIT OR Apache-2.0)
 - **[Dear ImGui](https://github.com/ocornut/imgui)** — UI (MIT)
 - **[SDL2](https://www.libsdl.org/)** — window and input (zlib)
 - **[miniaudio](https://github.com/mackron/miniaudio)** — device and decode (public domain / MIT)

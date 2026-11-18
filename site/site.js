@@ -2,12 +2,14 @@
 (function () {
   'use strict';
   const features = [
-    ['Edit window', 'Bars/beats and minutes:seconds rulers, track headers, clip blocks with peak waveforms, playhead and markers.'],
-    ['Session', 'Tracks, clips, sources, markers, tempo and meter in a text `.polyhymnia` project beside the audio files.'],
-    ['Playback', 'Transport bar, loop, mix with gain, pan, mute and solo on the audio thread.'],
-    ['Real audio', 'WAV, FLAC and MP3 through miniaudio; offline `--render` and a 1 kHz tone `--audiotest` hook.'],
-    ['Atelier look', 'Greys and Atelier blue `#007bb7`, 12 languages, splash screen.'],
-    ['On the way', 'Editing tools, Mix window, recording, MIDI, bounce, plugins and video scoring.']
+    ['Edit window', 'SoundCraft's Pro Tools-style layout and icons: toolbar, tracks, rulers for bars, time, tempo, meter and markers, coloured clips with waveforms.'],
+    ['Import', 'File > Import Audio or drag and drop WAV, FLAC, MP3, AIFF and OGG onto a track; the Clips list keeps them.'],
+    ['Editing', 'Shuffle, Slip, Spot and Grid; cut, paste, duplicate, separate, heal, nudge; fades and crossfades in five shapes; undo.'],
+    ['Mix window', 'Channel strips with inserts, sends, routing, pan, solo, mute, faders and meters; busses and the master.'],
+    ['Effects', 'Built-in EQ, compressor, chorus, reverb and limiter, every setting a slider.'],
+    ['Record and bounce', 'Arm tracks, monitor inputs, punch and loop recording; bounce to WAV, FLAC or MP3, stems too.'],
+    ['Keyboard', 'Space plays and stops; shortcuts work anywhere except while you type in a field.'],
+    ['On the way', 'ASIO, VST3 and CLAP plugins with the free Octavia plugins, automation, MIDI and video scoring.']
   ];
   const grid = document.getElementById('features');
   if (grid) {

@@ -28,7 +28,9 @@ tracks, clips and waveforms, and a Mix window on the way. Part of
 **[SoundCraft](https://github.com/CursedPrograms/soundcraft)** (Rust, MIT OR Apache-2.0).
 **[Website](https://cursedprograms.github.io/Polyhymnia/)**
 
-![Polyhymnia Edit window: dual rulers, track lanes and clip waveforms](images/window.jpg)
+![Polyhymnia Edit window with the Midnight Groove demo session: toolbar, tracks, rulers, clips and the Clips list](images/window.jpg)
+
+![Polyhymnia Mix window: channel strips with inserts, sends, pan, faders and meters, and the 7-band EQ](images/mix.jpg)
 
 ## What works so far
 

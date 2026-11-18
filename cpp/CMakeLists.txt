@@ -41,7 +41,8 @@ set(CORE_SOURCES src/lang.cpp src/splash.cpp src/audio.cpp src/tempo.cpp src/tem
     src/spot_dialog.cpp src/engine_edit.cpp src/engine_fix.cpp src/import_audio.cpp src/clips_panel.cpp src/icons.cpp src/dsp.cpp src/mix_window.cpp
     src/record_bounce.cpp src/consolidate.cpp src/editor.cpp src/undo.cpp src/test_runner.cpp src/b64.cpp tests/test_b64.cpp tests/test_time_grid.cpp tests/test_engine_edit.cpp
     tests/test_clip_model.cpp tests/test_cmd_edit_fix.cpp tests/test_cmd_edit_more.cpp tests/test_cmd_clip.cpp tests/test_cmd_clip_more.cpp
-    tests/test_import_audio.cpp tests/test_mix_dsp.cpp tests/test_record_bounce.cpp)
+    tests/test_import_audio.cpp tests/test_mix_dsp.cpp tests/test_record_bounce.cpp
+    src/vst3_scan.cpp tests/test_vst3_scan.cpp)
 set(GUI_SOURCES src/main.cpp src/app.cpp)
 if(WIN32 AND EXISTS ${CMAKE_SOURCE_DIR}/src/app.rc)
     list(APPEND GUI_SOURCES src/app.rc)

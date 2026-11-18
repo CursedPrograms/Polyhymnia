@@ -6,6 +6,7 @@ cpp/external/SDL2-*/
 cpp/external/imgui-*/
 cpp/external/miniaudio.h
 cpp/external/stb_vorbis.c
+cpp/external/pluginterfaces/
 *.bmp
 shot-test.bmp
 # Test and agent output

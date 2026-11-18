@@ -38,7 +38,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 
 set(CORE_SOURCES src/lang.cpp src/splash.cpp src/audio.cpp src/tempo.cpp src/tempo_map.cpp src/timecode.cpp src/time_wide.cpp
     src/session.cpp src/project.cpp src/mix.cpp src/playback.cpp src/edit.cpp src/edit_drag.cpp src/clip_ops.cpp src/time_grid.cpp src/time_format.cpp
-    src/spot_dialog.cpp src/engine_edit.cpp src/engine_fix.cpp src/import_audio.cpp src/clips_panel.cpp
+    src/spot_dialog.cpp src/engine_edit.cpp src/engine_fix.cpp src/import_audio.cpp src/clips_panel.cpp src/icons.cpp
     src/consolidate.cpp src/editor.cpp src/undo.cpp src/test_runner.cpp tests/test_time_grid.cpp tests/test_engine_edit.cpp tests/test_clip_model.cpp
     tests/test_cmd_edit_fix.cpp tests/test_cmd_edit_more.cpp tests/test_cmd_clip.cpp tests/test_cmd_clip_more.cpp tests/test_import_audio.cpp)
 set(GUI_SOURCES src/main.cpp src/app.cpp)

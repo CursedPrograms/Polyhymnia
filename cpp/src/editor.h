@@ -9,7 +9,7 @@ namespace Editor {
 
 enum class Mode { Shuffle, Slip, Spot, Grid, GridRelative };
 
-enum class Tool { Smart, Selector, Grabber, Trim };
+enum class Tool { Zoom, Trim, Selector, Grabber, Scrubber, Pencil, Smart };
 
 // One chosen clip on a track.
 struct ClipRef {

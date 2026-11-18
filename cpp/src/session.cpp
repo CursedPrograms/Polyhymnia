@@ -636,6 +636,301 @@ Document demoEngineSession() {
     return d;
 }
 
+namespace {
+
+// after SoundCraft (crates/engine/src/demo.rs Rng, kick, snare, hat, drums, bass, pad, keys_sequence, lead_sequence)
+struct DemoRng {
+    uint64_t s = 0x9e3779b97f4a7c15ULL;
+    float next() {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        return static_cast<float>(s >> 40) / static_cast<float>(1ULL << 24) * 2.0f - 1.0f;
+    }
+};
+
+double midiToHz(double note) {
+    return 440.0 * std::pow(2.0, (note - 69.0) / 12.0);
+}
+
+void synthKick(double sr, size_t frames, std::vector<float>& out, size_t at, float vel) {
+    const size_t len = static_cast<size_t>(sr * 0.45);
+    double phase = 0.0;
+    const size_t limit = (at < frames) ? std::min(len, frames - at) : 0;
+    for (size_t i = 0; i < limit; ++i) {
+        const double t = static_cast<double>(i) / sr;
+        const double f = 48.0 + 110.0 * std::exp(-t * 28.0);
+        phase += 2.0 * 3.14159265358979323846 * f / sr;
+        const float env = static_cast<float>(std::exp(-t * 7.5));
+        const float click = (i < 64) ? (static_cast<float>(64 - i) / 64.0f * 0.3f) : 0.0f;
+        out[at + i] += (static_cast<float>(std::sin(phase)) * env + click) * vel * 0.9f;
+    }
+}
+
+void synthSnare(double sr, size_t frames, std::vector<float>& out, size_t at, float vel, DemoRng& rng) {
+    const size_t len = static_cast<size_t>(sr * 0.3);
+    float lp = 0.0f;
+    const size_t limit = (at < frames) ? std::min(len, frames - at) : 0;
+    for (size_t i = 0; i < limit; ++i) {
+        const double t = static_cast<double>(i) / sr;
+        const float n = rng.next();
+        lp += 0.55f * (n - lp);
+        const float body = static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * 185.0 * t) * std::exp(-t * 22.0));
+        const float env = static_cast<float>(std::exp(-t * 14.0));
+        out[at + i] += ((n - lp) * env * 0.8f + body * 0.5f) * vel * 0.7f;
+    }
+}
+
+void synthHat(double sr, size_t frames, std::vector<float>& out, size_t at, float vel, bool open, DemoRng& rng) {
+    const size_t len = static_cast<size_t>(sr * (open ? 0.35 : 0.06));
+    float prev = 0.0f;
+    const size_t limit = (at < frames) ? std::min(len, frames - at) : 0;
+    for (size_t i = 0; i < limit; ++i) {
+        const double t = static_cast<double>(i) / sr;
+        const float n = rng.next();
+        const float hp = n - prev;
+        prev = n;
+        const float env = static_cast<float>(std::exp(-t * (open ? 9.0 : 70.0)));
+        out[at + i] += hp * env * vel * 0.25f;
+    }
+}
+
+constexpr uint8_t kProg[4][4] = {{57, 60, 64, 69}, {53, 57, 60, 65}, {48, 52, 55, 60}, {55, 59, 62, 67}};
+
+} // namespace
+
+// after SoundCraft (crates/engine/src/demo.rs demo_session)
+Document midnightGrooveDemo() {
+    static std::optional<Document> cached;
+    if (cached) return *cached;
+
+    constexpr double kBpm = 104.0;
+    constexpr size_t kBars = 24;
+    const double sr = 48000.0;
+    const size_t beat = static_cast<size_t>( std::llround(sr * 60.0 / kBpm));
+    const size_t bar = beat * 4;
+    const size_t total = bar * kBars + static_cast<size_t>(sr * 2.0);
+
+    Document d;
+    d.name = "Midnight Groove";
+    d.sampleRate = sr;
+    d.bitDepth = 24;
+    d.time.tempoBpm = kBpm;
+    d.time.meter = {4, 4};
+
+    std::vector<float> kBuf(total, 0.0f), sBuf(total, 0.0f), hBuf(total, 0.0f);
+    DemoRng rng;
+    for (size_t b = 0; b < kBars; ++b) {
+        const size_t b0 = b * bar;
+        const bool full = b >= 4;
+        if (full) {
+            synthKick(sr, total, kBuf, b0, 1.0f);
+            synthKick(sr, total, kBuf, b0 + 2 * beat + beat / 2, 0.8f);
+            synthKick(sr, total, kBuf, b0 + 3 * beat, 0.6f);
+            synthSnare(sr, total, sBuf, b0 + beat, 1.0f, rng);
+            synthSnare(sr, total, sBuf, b0 + 3 * beat, 1.0f, rng);
+            if (b % 4 == 3) {
+                synthSnare(sr, total, sBuf, b0 + 3 * beat + beat / 2, 0.5f, rng);
+                synthSnare(sr, total, sBuf, b0 + 3 * beat + 3 * beat / 4, 0.7f, rng);
+            }
+        }
+        for (size_t i = 0; i < 8; ++i) {
+            synthHat(sr, total, hBuf, b0 + i * beat / 2, (i % 2 == 0) ? 1.0f : 0.6f, full && i == 7, rng);
+        }
+    }
+
+    std::vector<float> bassBuf(total, 0.0f);
+    double lp = 0.0;
+    for (size_t b = 4; b < kBars; ++b) {
+        const double root = static_cast<double>(kProg[b % 4][0]) - 24.0;
+        const std::tuple<size_t, double, double> pat[5] = {
+            {0, 0.0, 1.5}, {2, 0.0, 0.5}, {3, 12.0, 0.5}, {5, 0.0, 0.5}, {6, 7.0, 1.0}};
+        for (const auto& [eighth, semi, beats] : pat) {
+            const size_t at = b * bar + eighth * beat / 2;
+            const size_t len = static_cast<size_t>(beats * static_cast<double>(beat));
+            const double f = midiToHz(root + semi);
+            double ph = 0.0;
+            for (size_t i = 0; i < len && at + i < total; ++i) {
+                ph = std::fmod(ph + f / sr, 1.0);
+                const double saw = 2.0 * ph - 1.0;
+                const double t = static_cast<double>(i) / sr;
+                const double cutoff = 0.02 + 0.12 * std::exp(-t * 9.0);
+                lp += cutoff * (saw - lp);
+                const double env = (1.0 - std::exp(-t * 200.0)) * ((i + 400 > len) ? static_cast<double>(len - i) / 400.0 : 1.0);
+                bassBuf[at + i] += static_cast<float>(lp * env * 0.55);
+            }
+        }
+    }
+
+    std::vector<float> padL(total, 0.0f), padR(total, 0.0f);
+    for (size_t b = 0; b < kBars; ++b) {
+        const auto& chord = kProg[b % 4];
+        const size_t at = b * bar;
+        for (size_t vi = 0; vi < 4; ++vi) {
+            const double f = midiToHz(static_cast<double>(chord[vi]) + 12.0);
+            for (int side : {-1, 1}) {
+                std::vector<float>& dst = (side < 0) ? padL : padR;
+                const double det = 1.0 + static_cast<double>(side) * 0.0035 * static_cast<double>(vi + 1);
+                double ph = static_cast<double>(vi) * 0.17;
+                for (size_t i = 0; i < bar && at + i < total; ++i) {
+                    ph = std::fmod(ph + f * det / sr, 1.0);
+                    const double tri = 1.0 - 4.0 * std::abs(ph - 0.5);
+                    const double t = static_cast<double>(i) / static_cast<double>(bar);
+                    const double env = std::min(1.0, t * 8.0) * std::min(1.0, (1.0 - t) * 6.0);
+                    dst[at + i] += static_cast<float>(tri * env * 0.07);
+                }
+            }
+        }
+    }
+
+    auto addDemoAudioTrack = [&](const char* name, std::vector<std::vector<float>> chans, size_t startBar, size_t colorIdx,
+                                 float volDb, float panVal, const char* inserts, const std::vector<size_t>& splits) {
+        const size_t nCh = chans.size();
+        Source s;
+        s.numId = d.nextSourceId++;
+        s.id = "src_" + std::to_string(s.numId);
+        s.name = name;
+        s.path = std::string("Audio Files/") + name + ".wav";
+        s.sampleRate = static_cast<int>(sr);
+        s.channels = static_cast<int>(nCh);
+        s.frames = static_cast<long long>(chans[0].size());
+        s.format = FileFormat::Wav;
+        s.unsaved = true;
+        s.monoPcm = chans[0];
+        AudioBuffer ab;
+        ab.sampleRate = static_cast<uint32_t>(sr);
+        ab.channels = std::move(chans);
+        d.pool.insert(s.numId, std::make_shared<SourceAudio>(std::move(ab)));
+        d.sources.push_back(std::move(s));
+        const std::string srcId = d.sources.back().id;
+        const uint64_t srcNum = d.sources.back().numId;
+
+        const uint64_t tNum = addTrack(d, TrackKind::Audio, channelFormatForChannels(nCh), std::string(name));
+        Track* tr = findTrackByNum(d, tNum);
+        tr->color = kTrackColors[colorIdx % 16];
+        tr->gainDb = volDb;
+        tr->pan = panVal;
+        tr->view = "waveform";
+        tr->insertsSummary = inserts ? inserts : "";
+
+        const long long startSamp = static_cast<long long>(startBar * bar);
+        const long long fullEnd = static_cast<long long>(total) - static_cast<long long>(sr * 1.5);
+        std::vector<long long> bounds = {startSamp};
+        for (size_t sp : splits) bounds.push_back(static_cast<long long>(sp * bar));
+        bounds.push_back(fullEnd);
+        for (size_t i = 0; i + 1 < bounds.size(); ++i) {
+            Clip c = makeAudioClip(d, srcId, srcNum, bounds[i], bounds[i], bounds[i + 1] - bounds[i], name);
+            if (i + 2 == bounds.size()) {
+                c.fadeOut = {static_cast<long long>(sr * 0.5), FadeShape::SCurve, 0.0f};
+            }
+            tr->clips.push_back(std::move(c));
+        }
+        return tNum;
+    };
+
+    const uint64_t tk = addDemoAudioTrack("Kick", {std::move(kBuf)}, 4, 7, -3.0f, 0.0f, "EQ7 \xC2\xB7 Comp", {12, 20});
+    addDemoAudioTrack("Snare", {std::move(sBuf)}, 4, 6, -4.0f, 0.0f, "", {12, 20});
+    addDemoAudioTrack("Hats", {std::move(hBuf)}, 0, 5, -10.0f, 0.35f, "", {});
+    const uint64_t tb = addDemoAudioTrack("Bass", {std::move(bassBuf)}, 4, 10, -5.0f, 0.0f, "Comp \xC2\xB7 Satur", {8, 16});
+    const uint64_t tp = addDemoAudioTrack("Pad", {std::move(padL), std::move(padR)}, 0, 1, -8.0f, -1.0f, "Chorus", {});
+    if (Track* padTr = findTrackByNum(d, tp)) {
+        AutomationLane* l = padTr->laneMut({AutoParamKind::Volume, 0});
+        l->setPoint(0, -30.0f);
+        l->setPoint(static_cast<long long>(4 * bar), -8.0f);
+        l->setPoint(static_cast<long long>(20 * bar), -8.0f);
+        l->setPoint(static_cast<long long>(24 * bar), -24.0f);
+    }
+
+    // Keys Instrument track
+    {
+        const uint64_t tKeys = addTrack(d, TrackKind::Instrument, ChannelFormat::Stereo, std::string("Keys"));
+        Track* tr = findTrackByNum(d, tKeys);
+        tr->color = kTrackColors[2];
+        tr->gainDb = -9.0f;
+        tr->pan = -1.0f;
+        tr->view = "notes";
+        Clip kc;
+        kc.numId = newClipNumId(d);
+        kc.id = "clip_" + std::to_string(kc.numId);
+        kc.name = "Keys";
+        kc.isMidi = true;
+        kc.start = static_cast<long long>(4 * bar);
+        kc.length = static_cast<long long>((kBars - 4) * bar);
+        kc.midi = MidiSequence{};
+        const long long q = 960;
+        for (long long b = 0; b < static_cast<long long>(kBars - 4); ++b) {
+            const auto& chord = kProg[(b + 4) % 4];
+            for (long long offs : {0LL, q + q / 2, 3 * q}) {
+                for (size_t ni = 1; ni < 4; ++ni) {
+                    kc.midi->notes.push_back({chord[ni], 92, 64, 0, b * 4 * q + offs, q - 40});
+                }
+            }
+        }
+        tr->clips.push_back(std::move(kc));
+    }
+
+    // Lead Instrument track
+    {
+        const uint64_t tLead = addTrack(d, TrackKind::Instrument, ChannelFormat::Stereo, std::string("Lead"));
+        Track* tr = findTrackByNum(d, tLead);
+        tr->color = kTrackColors[9];
+        tr->gainDb = -12.0f;
+        tr->pan = -1.0f;
+        tr->view = "notes";
+        Clip lc;
+        lc.numId = newClipNumId(d);
+        lc.id = "clip_" + std::to_string(lc.numId);
+        lc.name = "Lead";
+        lc.isMidi = true;
+        lc.start = static_cast<long long>(12 * bar);
+        lc.length = static_cast<long long>(8 * bar);
+        lc.midi = MidiSequence{};
+        const long long e = 480;
+        const std::tuple<uint8_t, long long, long long> phrase[10] = {
+            {76, 0, 3}, {74, 3, 1}, {72, 4, 2}, {74, 6, 2}, {76, 8, 4},
+            {79, 12, 2}, {77, 14, 2}, {76, 16, 6}, {72, 22, 2}, {74, 24, 8}};
+        for (long long rep = 0; rep < 2; ++rep) {
+            for (const auto& [pitch, st, ln] : phrase) {
+                lc.midi->notes.push_back({pitch, 100, 64, 0, rep * 32 * e + st * e, ln * e - 30});
+            }
+        }
+        tr->clips.push_back(std::move(lc));
+    }
+
+    // Verb Aux track
+    {
+        const uint64_t tVerb = addTrack(d, TrackKind::Aux, ChannelFormat::Stereo, std::string("Verb"));
+        Track* tr = findTrackByNum(d, tVerb);
+        tr->color = kTrackColors[12];
+        tr->gainDb = -4.0f;
+        tr->pan = -1.0f;
+        tr->view = "volume";
+        tr->insertsSummary = "Plate";
+    }
+
+    // Master 1 track
+    {
+        const uint64_t tMaster = addTrack(d, TrackKind::Master, ChannelFormat::Stereo, std::string("Master"));
+        Track* tr = findTrackByNum(d, tMaster);
+        tr->color = {140, 140, 140};
+        tr->gainDb = 0.0f;
+        tr->view = "volume";
+        tr->insertsSummary = "Maximizer";
+    }
+
+    d.markers.push_back({"m1", "Intro", 0, 0, 1, 1, 0});
+    d.markers.push_back({"m2", "Verse", static_cast<long long>(4 * bar), static_cast<long long>(4 * bar), 1, 2, 0});
+    d.markers.push_back({"m3", "Chorus", static_cast<long long>(12 * bar), static_cast<long long>(12 * bar), 1, 3, 0});
+    d.markers.push_back({"m4", "Outro", static_cast<long long>(20 * bar), static_cast<long long>(20 * bar), 1, 4, 0});
+
+    d.sessionEdit.selectedTracks = {tk};
+    d.sessionEdit.selection = Time::Range::newRange(static_cast<long long>(4 * bar), static_cast<long long>(4 * bar));
+    (void)tb;
+    d.touch = 1;
+    cached = d;
+    return d;
+}
+
 // after SoundCraft (crates/model/src/track.rs Playlist::sort)
 void sortPlaylist(Track& track) {
     std::sort(track.clips.begin(), track.clips.end(), [](const Clip& a, const Clip& b) {

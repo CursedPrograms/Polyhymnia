@@ -179,8 +179,16 @@ struct Track {
     std::array<uint8_t, 3> color = {86, 132, 214};
     bool mute = false;
     bool solo = false;
+    bool recordArm = false;
+    bool inputMonitor = false;
+    bool inactive = false;
+    bool frozen = false;
+    bool ticksTimebase = false;
     float gainDb = 0.0f;
     float pan = 0.0f;
+    float heightPoints = 78.0f;
+    std::string automationMode = "read";
+    std::string insertsSummary;
     bool hidden = false;
     bool elastic = false;
     std::string folderParent;
@@ -205,6 +213,19 @@ struct Marker {
     long long end = 0;
     int ruler = 1;
     unsigned number = 0;
+    int kind = 0; // 0 = Marker, 1 = Selection, 2 = None
+};
+
+// after SoundCraft (crates/model/src/markers.rs Group)
+struct Group {
+    uint64_t numId = 1;
+    char letter = 'a';
+    std::string name;
+    bool active = true;
+    bool edit = true;
+    bool mix = true;
+    std::array<uint8_t, 3> color = {86, 132, 214};
+    std::vector<uint64_t> members;
 };
 
 struct Source {
@@ -314,14 +335,19 @@ struct Document {
     uint32_t touch = 0;
     std::string name = "Untitled";
     double sampleRate = 48000.0;
+    int bitDepth = 24;
     Time::FrameRate frameRate = Time::FrameRate::Fps30;
     long long timecodeStart = 0;
     long long feetFramesStart = 0;
     Time::Map time;
     EditSettings edit;
+    bool countoff = false;
+    int countoffBars = 2;
+    bool click = false;
     std::vector<Source> sources;
     std::vector<Track> tracks;
     std::vector<Marker> markers;
+    std::vector<Group> groups;
     std::string folder;
     uint64_t nextClipId = 1;
     uint64_t nextTrackId = 1;
@@ -342,6 +368,7 @@ std::vector<const Clip*> clipsUsing(const Document& doc, uint64_t sourceNumId);
 
 Document empty();
 Document demo();
+Document midnightGrooveDemo();
 Track* findTrack(Document& doc, const std::string& id);
 const Track* findTrack(const Document& doc, const std::string& id);
 Source* findSource(Document& doc, const std::string& id);

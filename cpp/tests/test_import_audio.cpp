@@ -4,6 +4,7 @@
 #include "clips_panel.h"
 #include "engine.h"
 #include "engine_edit.h"
+#include "icons.h"
 #include "import_audio.h"
 #include "test_runner.h"
 
@@ -594,6 +595,49 @@ static bool test_clip_rows_list_every_clip_in_track_order_and_filter_by_name() {
     return true;
 }
 
+// after SoundCraft (crates/ui-egui/src/toolbar.rs compact_grid_values_use_their_counter_formats)
+static bool test_compact_grid_values_use_their_counter_formats() {
+    Session::Document s = Session::empty();
+    EXPECT_EQ(Icons::compactGridLabel(s, TimeGrid::GridValue::note(TimeGrid::NoteValue::Quarter, false, false)), std::string("0|1|000"));
+    EXPECT_EQ(Icons::compactGridLabel(s, TimeGrid::GridValue::seconds(0.5)), std::string("0:00.500"));
+    EXPECT_EQ(Icons::compactGridLabel(s, TimeGrid::GridValue::timecode(TimeGrid::TimecodeValue::Frame)), std::string("00:00:00:01.00"));
+    EXPECT_EQ(Icons::compactGridLabel(s, TimeGrid::GridValue::feetFrames(TimeGrid::FeetFramesValue::Frame)), std::string("0+01"));
+    EXPECT_EQ(Icons::compactGridLabel(s, TimeGrid::GridValue::samples(1000)), std::string("1000"));
+    return true;
+}
+
+// after SoundCraft (crates/ui-egui/src/toolbar.rs option_toggles_have_distinct_icons)
+static bool test_option_toggles_have_distinct_icons() {
+    Session::Document s = Session::empty();
+    const auto toggles = Icons::optionToggles(s);
+    EXPECT_EQ(toggles.size(), 6u);
+    for (size_t i = 0; i < toggles.size(); ++i) {
+        for (size_t j = i + 1; j < toggles.size(); ++j) {
+            EXPECT_TRUE(std::string(toggles[i].icon) != std::string(toggles[j].icon));
+            EXPECT_TRUE(std::string(toggles[i].commandId) != std::string(toggles[j].commandId));
+        }
+    }
+    return true;
+}
+
+// after SoundCraft (crates/engine/src/demo.rs demo_builds_and_renders_sound)
+static bool test_midnight_groove_demo_session_has_expected_tracks_and_clips() {
+    const Session::Document& d = Session::midnightGrooveDemo();
+    EXPECT_EQ(d.name, std::string("Midnight Groove"));
+    EXPECT_EQ(d.tracks.size(), 9u);
+    EXPECT_EQ(d.sources.size(), 5u);
+    EXPECT_EQ(d.markers.size(), 4u);
+    EXPECT_EQ(d.tracks[0].name, std::string("Kick"));
+    EXPECT_EQ(d.tracks[5].name, std::string("Keys"));
+    EXPECT_TRUE(d.tracks[5].kind == Session::TrackKind::Instrument);
+    EXPECT_EQ(d.tracks[6].name, std::string("Lead"));
+    EXPECT_TRUE(d.tracks[6].kind == Session::TrackKind::Instrument);
+    EXPECT_EQ(d.tracks[7].name, std::string("Verb"));
+    EXPECT_TRUE(d.tracks[7].kind == Session::TrackKind::Aux);
+    EXPECT_TRUE(d.tracks[8].kind == Session::TrackKind::Master);
+    return true;
+}
+
 void registerImportAudioTests() {
     Test::add("source::the_format_names_in_session_files_do_not_change", test_the_format_names_in_session_files_do_not_change);
     Test::add("source::an_mp4_is_named_by_its_codec", test_an_mp4_is_named_by_its_codec);
@@ -613,4 +657,7 @@ void registerImportAudioTests() {
     Test::add("ui_import::imports_queue_and_a_bad_file_reports_without_stopping_the_rest", test_imports_queue_and_a_bad_file_reports_without_stopping_the_rest);
     Test::add("ui_import::a_failed_import_stays_on_the_status_line_while_the_next_one_starts", test_a_failed_import_stays_on_the_status_line_while_the_next_one_starts);
     Test::add("clips_panel::clip_rows_list_every_clip_in_track_order_and_filter_by_name", test_clip_rows_list_every_clip_in_track_order_and_filter_by_name);
+    Test::add("toolbar::compact_grid_values_use_their_counter_formats", test_compact_grid_values_use_their_counter_formats);
+    Test::add("toolbar::option_toggles_have_distinct_icons", test_option_toggles_have_distinct_icons);
+    Test::add("demo::midnight_groove_demo_session_has_expected_tracks_and_clips", test_midnight_groove_demo_session_has_expected_tracks_and_clips);
 }

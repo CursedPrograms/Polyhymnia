@@ -45,7 +45,7 @@ static bool fileExists(const char* f) {
 
 static ImFont* addFont(const char* file, float size) {
     ImGuiIO& io = ImGui::GetIO();
-    static const ImWchar ranges[] = {0x0020, 0x024F, 0x0400, 0x04FF, 0x2190, 0x21FF, 0x2600, 0x26FF, 0};
+    static const ImWchar ranges[] = {0x0020, 0x024F, 0x0400, 0x04FF, 0x2000, 0x206F, 0x2190, 0x22FF, 0x2600, 0x26FF, 0};
     ImFont* font = io.Fonts->AddFontFromFileTTF(file, size, nullptr, ranges);
     static const char* symbols = "C:/Windows/Fonts/seguisym.ttf";
     static const ImWchar symbolRanges[] = {0x2190, 0x21FF, 0x2600, 0x26FF, 0};

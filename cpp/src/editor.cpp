@@ -94,10 +94,13 @@ const char* modeLabel(Mode m) {
 
 const char* toolLabel(Tool t) {
     switch (t) {
-    case Tool::Smart: return "Smart";
+    case Tool::Zoom: return "Zoomer";
+    case Tool::Trim: return "Trim";
     case Tool::Selector: return "Selector";
     case Tool::Grabber: return "Grabber";
-    case Tool::Trim: return "Trim";
+    case Tool::Scrubber: return "Scrubber";
+    case Tool::Pencil: return "Pencil";
+    case Tool::Smart: return "Smart";
     }
     return "Smart";
 }

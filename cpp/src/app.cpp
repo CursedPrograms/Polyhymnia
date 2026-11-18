@@ -1,18 +1,22 @@
-// Polyhymnia - Edit window shell, preferences (language and audio device), test hooks.
+// Polyhymnia - Edit window shell, menus, docks, dialogs, preferences, test hooks
+// (after SoundCraft crates/ui-egui/src/menus.rs, edit_window.rs, panels/*.rs, dialogs.rs).
 #include "app.h"
 #include "audio.h"
+#include "clip_ops.h"
 #include "clips_panel.h"
-#include "lang.h"
 #include "edit.h"
-#include "spot_dialog.h"
 #include "editor.h"
 #include "engine.h"
+#include "icons.h"
 #include "import_audio.h"
+#include "lang.h"
 #include "mix.h"
-#include "undo.h"
 #include "playback.h"
 #include "project.h"
 #include "splash.h"
+#include "spot_dialog.h"
+#include "time_format.h"
+#include "undo.h"
 
 #include <imgui.h>
 
@@ -26,6 +30,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -55,8 +60,15 @@ static bool hasDoc = false;
 static std::string docPath;
 static std::string sessionNote;
 static Undo::History hist;
-static EngCmd::Engine gImportEngine;
 static ImportAudio::Imports gImports;
+
+// Layout dock state (after SoundCraft crates/ui-egui/src/state.rs & edit_window.rs)
+static bool gShowLeftDock = true;
+static bool gShowRightDock = true;
+static float gLeftDockW = 190.0f;
+static float gRightDockW = 220.0f;
+static int gLowerTab = -1; // -1 = collapsed, 0 = MIDI EDITOR, 1 = MEMORY LOCATIONS, 2 = UNDO HISTORY
+static float gLowerDockH = 190.0f;
 
 struct ImportAudioDialogState {
     bool open = false;
@@ -68,13 +80,35 @@ struct ImportAudioDialogState {
 };
 static ImportAudioDialogState gImportDlg;
 
-static const ImU32 C_BG = IM_COL32(0x1a, 0x1a, 0x1a, 255), C_PANEL = IM_COL32(0x21, 0x21, 0x21, 255), C_WELL = IM_COL32(0x2a, 0x2a, 0x2a, 255),
-                   C_LINE = IM_COL32(0x33, 0x33, 0x33, 255), C_TEXT = IM_COL32(0xd6, 0xd6, 0xd6, 255), C_DIM = IM_COL32(0x9a, 0x9a, 0x9a, 255),
-                   C_BLUE = IM_COL32(0x00, 0x7b, 0xb7, 255), C_DEEP = IM_COL32(0x00, 0x5c, 0x8a, 255);
+// New Tracks dialog state (after SoundCraft crates/ui-egui/src/dialogs/new_tracks.rs)
+struct NewTrackRowUI {
+    int count = 1;
+    int formatIdx = 1; // 0 = Mono, 1 = Stereo
+    int kindIdx = 0;   // 0 = Audio, 1 = Aux, 2 = Master, 3 = MIDI, 4 = Instrument, 5 = VCA, 6 = Folder
+    int timebaseIdx = 0; // 0 = Samples, 1 = Ticks
+    char nameBuf[128] = "Audio";
+};
+struct NewTracksDialogState {
+    bool open = false;
+    std::vector<NewTrackRowUI> rows;
+};
+static NewTracksDialogState gNewTracksDlg;
+
+static const ImU32 C_BG0 = IM_COL32(0x16, 0x16, 0x16, 255);
+static const ImU32 C_BG1 = IM_COL32(0x1e, 0x1e, 0x1e, 255);
+static const ImU32 C_BG2 = IM_COL32(0x25, 0x25, 0x25, 255);
+static const ImU32 C_BG3 = IM_COL32(0x2e, 0x2e, 0x2e, 255);
+static const ImU32 C_BORDER = IM_COL32(0x0c, 0x0c, 0x0c, 255);
+static const ImU32 C_LINE = IM_COL32(0x33, 0x33, 0x33, 255);
+static const ImU32 C_TEXT = IM_COL32(0xe2, 0xe2, 0xe2, 255);
+static const ImU32 C_DIM = IM_COL32(0x96, 0x96, 0x96, 255);
+static const ImU32 C_MUTED = IM_COL32(0x64, 0x64, 0x64, 255);
+static const ImU32 C_BLUE = IM_COL32(0x00, 0x7b, 0xb7, 255);
+static const ImU32 C_DEEP = IM_COL32(0x00, 0x5c, 0x8a, 255);
 
 static ImVec4 col4(ImU32 c) { return ImGui::ColorConvertU32ToFloat4(c); }
 
-// Atelier greys and blue everywhere (after Mosaic Mask gui.cpp applyStyle); no default ImGui navy.
+// Atelier greys and blue everywhere (after Mosaic Mask gui.cpp applyStyle & SoundCraft theme.rs); no default ImGui navy.
 static void applyStyle() {
     ImGuiStyle& s = ImGui::GetStyle();
     s.WindowRounding = 0;
@@ -86,45 +120,45 @@ static void applyStyle() {
     s.WindowBorderSize = 0;
     s.FrameBorderSize = 0;
     s.PopupBorderSize = 1;
-    s.WindowPadding = ImVec2(12, 10);
-    s.FramePadding = ImVec2(7, 4);
-    s.ItemSpacing = ImVec2(6, 7);
+    s.WindowPadding = ImVec2(8, 6);
+    s.FramePadding = ImVec2(6, 3);
+    s.ItemSpacing = ImVec2(6, 5);
     ImVec4* c = s.Colors;
     c[ImGuiCol_Text] = col4(C_TEXT);
     c[ImGuiCol_TextDisabled] = col4(C_DIM);
-    c[ImGuiCol_WindowBg] = col4(C_PANEL);
-    c[ImGuiCol_ChildBg] = col4(C_PANEL);
-    c[ImGuiCol_PopupBg] = col4(C_PANEL);
+    c[ImGuiCol_WindowBg] = col4(C_BG1);
+    c[ImGuiCol_ChildBg] = col4(C_BG1);
+    c[ImGuiCol_PopupBg] = col4(C_BG2);
     c[ImGuiCol_Border] = col4(C_LINE);
     c[ImGuiCol_BorderShadow] = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_Separator] = col4(C_LINE);
     c[ImGuiCol_SeparatorHovered] = col4(C_DEEP);
     c[ImGuiCol_SeparatorActive] = col4(C_BLUE);
-    c[ImGuiCol_FrameBg] = col4(C_WELL);
-    c[ImGuiCol_FrameBgHovered] = col4(IM_COL32(0x2e, 0x2e, 0x2e, 255));
-    c[ImGuiCol_FrameBgActive] = col4(IM_COL32(0x33, 0x33, 0x33, 255));
-    c[ImGuiCol_TitleBg] = col4(C_BG);
-    c[ImGuiCol_TitleBgActive] = col4(C_BG);
-    c[ImGuiCol_TitleBgCollapsed] = col4(C_BG);
-    c[ImGuiCol_MenuBarBg] = col4(C_BG);
-    c[ImGuiCol_ScrollbarBg] = col4(C_PANEL);
+    c[ImGuiCol_FrameBg] = col4(C_BG2);
+    c[ImGuiCol_FrameBgHovered] = col4(C_BG3);
+    c[ImGuiCol_FrameBgActive] = col4(IM_COL32(0x36, 0x36, 0x36, 255));
+    c[ImGuiCol_TitleBg] = col4(C_BG0);
+    c[ImGuiCol_TitleBgActive] = col4(C_BG0);
+    c[ImGuiCol_TitleBgCollapsed] = col4(C_BG0);
+    c[ImGuiCol_MenuBarBg] = col4(C_BG1);
+    c[ImGuiCol_ScrollbarBg] = col4(C_BG1);
     c[ImGuiCol_ScrollbarGrab] = col4(C_LINE);
     c[ImGuiCol_ScrollbarGrabHovered] = col4(C_DEEP);
     c[ImGuiCol_ScrollbarGrabActive] = col4(C_BLUE);
     c[ImGuiCol_CheckMark] = col4(C_BLUE);
     c[ImGuiCol_SliderGrab] = col4(C_BLUE);
     c[ImGuiCol_SliderGrabActive] = col4(C_DEEP);
-    c[ImGuiCol_Button] = col4(IM_COL32(0x33, 0x33, 0x33, 255));
+    c[ImGuiCol_Button] = col4(C_BG3);
     c[ImGuiCol_ButtonHovered] = col4(C_DEEP);
     c[ImGuiCol_ButtonActive] = col4(C_BLUE);
-    c[ImGuiCol_Header] = col4(IM_COL32(0x33, 0x33, 0x33, 255));
+    c[ImGuiCol_Header] = col4(C_BG3);
     c[ImGuiCol_HeaderHovered] = col4(C_DEEP);
     c[ImGuiCol_HeaderActive] = col4(C_BLUE);
-    c[ImGuiCol_Tab] = col4(C_BG);
+    c[ImGuiCol_Tab] = col4(C_BG0);
     c[ImGuiCol_TabHovered] = col4(C_DEEP);
-    c[ImGuiCol_TabActive] = col4(C_PANEL);
-    c[ImGuiCol_TabUnfocused] = col4(C_BG);
-    c[ImGuiCol_TabUnfocusedActive] = col4(C_PANEL);
+    c[ImGuiCol_TabActive] = col4(C_BG2);
+    c[ImGuiCol_TabUnfocused] = col4(C_BG0);
+    c[ImGuiCol_TabUnfocusedActive] = col4(C_BG2);
     c[ImGuiCol_ResizeGrip] = col4(C_LINE);
     c[ImGuiCol_ResizeGripHovered] = col4(C_DEEP);
     c[ImGuiCol_ResizeGripActive] = col4(C_BLUE);
@@ -151,7 +185,6 @@ static void savePrefs() {
     std::ofstream f(prefDir + "polyhymnia.ini");
     f << "lang=" << Lang::current() << "\n";
     f << "buffer=" << (int)bufferSlider << "\n";
-    const auto& devs = Audio::playbackDevices();
     if (devIdx >= 0) f << "audio=" << devIdx << "\n";
 }
 
@@ -171,6 +204,26 @@ static void newDoc() {
     sessionNote.clear();
     hist.clear();
     Editor::clearSelection();
+    Playback::setDocument(&doc);
+}
+
+static void openDemoDoc() {
+    doc = Session::midnightGrooveDemo();
+    doc.folder = prefDir;
+    hasDoc = true;
+    docPath.clear();
+    sessionNote.clear();
+    hist.clear();
+    Edit::scriptSetup(doc);
+    Playback::setDocument(&doc);
+}
+
+static void openNewTracksDialog() {
+    if (!hasDoc) newDoc();
+    gNewTracksDlg.open = true;
+    if (gNewTracksDlg.rows.empty()) {
+        gNewTracksDlg.rows.push_back(NewTrackRowUI{});
+    }
 }
 
 static std::vector<std::string> pickAudioFilesDialog() {
@@ -298,22 +351,18 @@ void onFileDrop(const std::string& path, float x, float y) {
 
     if (!hasDoc) newDoc();
     if (ClipsPanel::containsScreenPoint(x, y)) {
-        // Dropped onto the Clips list on the right -> import into Clip List.
         runImportPaths({path}, 2, 0, true);
         return;
     }
 
     const Edit::DropTarget hit = Edit::hitTestDrop(doc, x, y);
     if (hit.inTimeline && hit.trackNumId != 0) {
-        // Dropped onto a track lane -> place on that track where dropped (or open Spot in Spot mode).
         const int locMode = (Editor::mode() == Editor::Mode::Spot) ? 2 : 0;
         runImportPaths({path}, 1, locMode, true, hit.trackNumId, hit.sampleAt);
     } else if (hit.inTimeline) {
-        // Dropped onto empty timeline space below tracks -> create a new track at the drop position.
         const int locMode = (Editor::mode() == Editor::Mode::Spot) ? 2 : 0;
         runImportPaths({path}, 0, locMode, true, std::nullopt, hit.sampleAt);
     } else {
-        // Dropped elsewhere on the window -> create a new track at playhead/selection.
         runImportPaths({path}, 0, 1, true);
     }
 }
@@ -380,6 +429,89 @@ static void drawImportAudioDialog() {
     ImGui::End();
 }
 
+static void drawNewTracksDialog() {
+    if (!gNewTracksDlg.open) return;
+    ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::Begin(T("New Tracks"), &gNewTracksDlg.open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
+        static const char* kFormats[] = {"Mono", "Stereo"};
+        static const char* kKinds[] = {"Audio Track", "Aux Input", "Master Fader", "MIDI Track", "Instrument Track", "VCA Master", "Folder Track"};
+        static const char* kKindIds[] = {"audio", "aux", "master", "midi", "instrument", "vca", "folder"};
+        static const char* kDefaultNames[] = {"Audio", "Aux", "Master", "MIDI", "Inst", "VCA", "Folder"};
+        static const char* kTimebases[] = {"Samples", "Ticks"};
+
+        int addAfter = -1, removeIdx = -1;
+        for (size_t i = 0; i < gNewTracksDlg.rows.size(); ++i) {
+            ImGui::PushID((int)i);
+            auto& r = gNewTracksDlg.rows[i];
+            ImGui::TextUnformatted("Create");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(52.0f);
+            ImGui::DragInt("##cnt", &r.count, 0.2f, 1, 128);
+            r.count = std::clamp(r.count, 1, 128);
+            ImGui::SameLine();
+            ImGui::TextUnformatted("new");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(82.0f);
+            ImGui::Combo("##fmt", &r.formatIdx, kFormats, 2);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(130.0f);
+            const int prevKind = r.kindIdx;
+            if (ImGui::Combo("##kind", &r.kindIdx, kKinds, 7)) {
+                if (std::strcmp(r.nameBuf, kDefaultNames[prevKind]) == 0) {
+                    std::snprintf(r.nameBuf, sizeof(r.nameBuf), "%s", kDefaultNames[r.kindIdx]);
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted("in");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(84.0f);
+            ImGui::Combo("##tb", &r.timebaseIdx, kTimebases, 2);
+            ImGui::SameLine();
+            ImGui::TextUnformatted("Name:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(140.0f);
+            ImGui::InputText("##name", r.nameBuf, sizeof(r.nameBuf));
+            ImGui::SameLine();
+            ImGui::BeginDisabled(gNewTracksDlg.rows.size() <= 1);
+            if (ImGui::Button("-", ImVec2(22, 0))) removeIdx = (int)i;
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("+", ImVec2(22, 0))) addAfter = (int)i;
+            ImGui::PopID();
+        }
+        if (removeIdx >= 0 && gNewTracksDlg.rows.size() > 1) {
+            gNewTracksDlg.rows.erase(gNewTracksDlg.rows.begin() + removeIdx);
+        } else if (addAfter >= 0 && gNewTracksDlg.rows.size() < 128) {
+            gNewTracksDlg.rows.insert(gNewTracksDlg.rows.begin() + addAfter + 1, NewTrackRowUI{});
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button(T("Cancel"))) {
+            gNewTracksDlg.open = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(T("Create")) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            const auto rowsCopy = gNewTracksDlg.rows;
+            mutateDocument("New Tracks", [rowsCopy](Session::Document& d) {
+                EngCmd::Engine e;
+                e.doc = std::move(d);
+                for (const auto& r : rowsCopy) {
+                    EngCmd::Engine::Params p;
+                    p.nums["count"] = (double)r.count;
+                    p.strs["kind"] = kKindIds[r.kindIdx];
+                    p.strs["format"] = r.formatIdx == 0 ? "Mono" : "Stereo";
+                    p.strs["name"] = r.nameBuf;
+                    e.execute("track.new", p);
+                }
+                d = std::move(e.doc);
+            });
+            gNewTracksDlg.open = false;
+        }
+    }
+    ImGui::End();
+}
+
 static void saveDoc() {
     if (!hasDoc) return;
     if (docPath.empty()) docPath = (std::filesystem::u8path(prefDir) / "Untitled.polyhymnia").u8string();
@@ -388,45 +520,213 @@ static void saveDoc() {
     else sessionNote = err;
 }
 
-static void openDemoDoc() {
-    doc = Session::demo();
-    hasDoc = true;
-    docPath.clear();
-}
+// ============================================================================
+// Left Dock: TRACKS & GROUPS (after SoundCraft crates/ui-egui/src/panels/tracks.rs)
+// ============================================================================
 
-static void drawLeftPanel() {
-    ImGui::BeginChild("left", ImVec2(280, 0), true);
-    ImGui::TextUnformatted(T("SESSION"));
-    ImGui::Separator();
-    if (!hasDoc) {
-        ImGui::TextDisabled("%s", T("No project open yet."));
-        ImGui::TextDisabled("%s", T("File > New to begin."));
-    } else {
-        ImGui::Text("%s", doc.name.c_str());
-        ImGui::Text("%s: %.1f BPM  %d/%d", T("Tempo"), doc.time.tempoBpm, doc.time.meter.num, doc.time.meter.den);
-        ImGui::Spacing();
-        ImGui::TextUnformatted(T("Tracks"));
-        for (const auto& t : doc.tracks) ImGui::BulletText("%s (%zu clips)", t.name.c_str(), t.clips.size());
-        ImGui::Spacing();
-        ImGui::TextUnformatted(T("Markers"));
-        for (const auto& m : doc.markers) ImGui::BulletText("%s @ %lld", m.name.c_str(), (long long)m.start);
-        if (!sessionNote.empty()) ImGui::TextWrapped("%s", sessionNote.c_str());
+static void drawLeftTracksAndGroupsDock(float width) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 6.0f));
+    ImGui::BeginChild("sc_left_dock", ImVec2(width, 0), true);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const float tracksSectionH = std::max(100.0f, avail.y * 0.64f);
+
+    // TRACKS header + '+' button
+    ImGui::TextColored(col4(C_DIM), "TRACKS");
+    ImGui::SameLine(avail.x - 18.0f);
+    if (Icons::iconButton("left_add_trk", ImVec2(18.0f, 16.0f), "plus", false, "New Tracks (Ctrl+Shift+N)", C_BLUE)) {
+        openNewTracksDialog();
     }
-    ImGui::Spacing();
-    if (ImGui::Button(T("Import Audio..."), ImVec2(-1, 0))) openImportAudioDialog();
-    ImGui::Spacing();
-    ImGui::TextUnformatted(T("AUDIO"));
     ImGui::Separator();
-    ImGui::TextWrapped("%s", audioNote.c_str());
+
+    ImGui::BeginChild("tracks_list_scroll", ImVec2(0, tracksSectionH - 28.0f), false);
+    for (size_t i = 0; i < doc.tracks.size(); ++i) {
+        auto& t = doc.tracks[i];
+        ImGui::PushID((int)i);
+        const ImVec2 rMin = ImGui::GetCursorScreenPos();
+        const float rW = ImGui::GetContentRegionAvail().x;
+        const float rH = 20.0f;
+        const bool isSel = std::find(doc.sessionEdit.selectedTracks.begin(), doc.sessionEdit.selectedTracks.end(), t.numId) != doc.sessionEdit.selectedTracks.end()
+                        || Editor::selection().trackId == t.id;
+
+        if (isSel) {
+            dl->AddRectFilled(rMin, ImVec2(rMin.x + rW, rMin.y + rH), C_BG3, 2.0f);
+        }
+
+        // Visibility dot button
+        ImGui::SetCursorScreenPos(ImVec2(rMin.x + 2.0f, rMin.y + 2.0f));
+        if (ImGui::InvisibleButton("vis_dot", ImVec2(14.0f, 16.0f))) {
+            t.hidden = !t.hidden;
+        }
+        const ImVec2 dotC(rMin.x + 8.0f, rMin.y + rH * 0.5f);
+        if (!t.hidden) {
+            dl->AddCircleFilled(dotC, 4.0f, C_BLUE);
+        } else {
+            dl->AddCircle(dotC, 4.0f, C_MUTED, 0, 1.2f);
+        }
+
+        // Track colour bar
+        const ImU32 tCol = IM_COL32(t.color[0], t.color[1], t.color[2], 255);
+        dl->AddRectFilled(ImVec2(rMin.x + 17.0f, rMin.y + 3.0f), ImVec2(rMin.x + 21.0f, rMin.y + rH - 3.0f), tCol, 1.0f);
+
+        // Track name selectable
+        ImGui::SetCursorScreenPos(ImVec2(rMin.x + 25.0f, rMin.y + 1.0f));
+        if (ImGui::InvisibleButton("trk_sel_row", ImVec2(std::max(16.0f, rW - 26.0f), rH - 2.0f))) {
+            if (!ImGui::GetIO().KeyShift) doc.sessionEdit.selectedTracks.clear();
+            doc.sessionEdit.selectedTracks.push_back(t.numId);
+            Editor::selectRange(Editor::selection().start, Editor::selection().end, t.id);
+        }
+        dl->PushClipRect(ImVec2(rMin.x + 25.0f, rMin.y), ImVec2(rMin.x + rW - 2.0f, rMin.y + rH), true);
+        dl->AddText(ImVec2(rMin.x + 25.0f, rMin.y + 3.0f),
+                    t.inactive ? C_MUTED : (isSel ? C_TEXT : C_DIM),
+                    t.name.c_str());
+        dl->PopClipRect();
+
+        ImGui::SetCursorScreenPos(ImVec2(rMin.x, rMin.y + rH + 1.0f));
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    // GROUPS header + '+' button
+    ImGui::Spacing();
+    ImGui::TextColored(col4(C_DIM), "GROUPS");
+    ImGui::SameLine(avail.x - 18.0f);
+    if (Icons::iconButton("left_add_grp", ImVec2(18.0f, 16.0f), "plus", false, "Create Group (Ctrl+G)", C_BLUE)) {
+        mutateDocument("Create Group", [](Session::Document& d) {
+            Session::Group g;
+            g.numId = (uint64_t)(d.groups.size() + 1);
+            g.letter = (char)('a' + (d.groups.size() % 26));
+            g.name = "Group " + std::to_string(g.numId);
+            g.active = true;
+            for (const auto& t : d.tracks) g.members.push_back(t.numId);
+            d.groups.push_back(std::move(g));
+        });
+    }
+    ImGui::Separator();
+
+    ImGui::BeginChild("groups_list_scroll", ImVec2(0, 0), false);
+    // Built-in <ALL> group
+    {
+        static bool sAllGroupActive = false;
+        if (ImGui::Selectable("<ALL>", sAllGroupActive)) {
+            sAllGroupActive = !sAllGroupActive;
+        }
+    }
+    for (size_t gi = 0; gi < doc.groups.size(); ++gi) {
+        auto& g = doc.groups[gi];
+        ImGui::PushID((int)gi);
+        const std::string grpLbl = std::string(1, g.letter) + "  " + g.name;
+        if (ImGui::Selectable(grpLbl.c_str(), g.active)) {
+            g.active = !g.active;
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+}
+
+// ============================================================================
+// Bottom Dock Tabs: MIDI EDITOR, MEMORY LOCATIONS, UNDO HISTORY & Status Bar
+// ============================================================================
+
+static void drawBottomDockContent(float height) {
+    ImGui::BeginChild("sc_bottom_dock_body", ImVec2(0, height), true);
+    if (gLowerTab == 0) {
+        // MIDI Editor Piano Roll preview
+        ImGui::TextColored(col4(C_DIM), "MIDI EDITOR");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(Double-click a MIDI clip or select Notes view to edit notes)");
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 sz = ImGui::GetContentRegionAvail();
+        dl->AddRectFilled(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), C_BG0);
+        const float keysW = 42.0f;
+        const int numRows = 12;
+        const float rowH = std::max(8.0f, sz.y / (float)numRows);
+        for (int r = 0; r < numRows; ++r) {
+            const int note = 71 - r;
+            const int pc = note % 12;
+            const bool black = (pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10);
+            const float y0 = p0.y + r * rowH;
+            dl->AddRectFilled(ImVec2(p0.x, y0), ImVec2(p0.x + keysW, y0 + rowH - 1.0f),
+                              black ? IM_COL32(30, 30, 30, 255) : IM_COL32(215, 215, 215, 255));
+            dl->AddRectFilled(ImVec2(p0.x + keysW, y0), ImVec2(p0.x + sz.x, y0 + rowH - 1.0f),
+                              black ? IM_COL32(20, 20, 20, 255) : IM_COL32(26, 26, 26, 255));
+        }
+        // Render notes from the first MIDI clip in the session
+        for (const auto& t : doc.tracks) {
+            for (const auto& c : t.clips) {
+                if (c.midi.has_value() && !c.midi->notes.empty()) {
+                    for (const auto& n : c.midi->notes) {
+                        const int row = std::clamp(71 - (int)n.pitch, 0, numRows - 1);
+                        const float nx0 = p0.x + keysW + 8.0f + (float)n.start * 0.002f;
+                        const float nx1 = nx0 + std::max(6.0f, (float)n.length * 0.002f);
+                        const float ny0 = p0.y + row * rowH + 1.0f;
+                        dl->AddRectFilled(ImVec2(nx0, ny0), ImVec2(nx1, ny0 + rowH - 2.0f), C_BLUE, 2.0f);
+                    }
+                    break;
+                }
+            }
+        }
+    } else if (gLowerTab == 1) {
+        // Memory Locations table (after panels/memory.rs)
+        if (ImGui::SmallButton("+ Add Marker")) {
+            mutateDocument("Add Marker", [](Session::Document& d) {
+                Session::Marker m;
+                m.number = (unsigned)(d.markers.size() + 1);
+                m.id = "m" + std::to_string(m.number);
+                m.name = "Marker " + std::to_string(m.number);
+                m.start = Playback::playhead();
+                d.markers.push_back(std::move(m));
+            });
+        }
+        ImGui::Separator();
+        if (ImGui::BeginTable("mem_locs_tbl", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
+            ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 36.0f);
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableHeadersRow();
+            for (size_t i = 0; i < doc.markers.size(); ++i) {
+                const auto& m = doc.markers[i];
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("%u", m.number ? m.number : (unsigned)(i + 1));
+                ImGui::TableSetColumnIndex(1);
+                if (ImGui::Selectable(m.name.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+                    Playback::setPlayhead(m.start);
+                }
+                ImGui::TableSetColumnIndex(2);
+                const std::string posStr = TimeFormat::formatPosition(m.start, TimeFormat::Kind::BarsBeats, doc);
+                ImGui::TextUnformatted(posStr.c_str());
+                ImGui::TableSetColumnIndex(3);
+                ImGui::TextUnformatted(m.end > m.start ? "Selection" : "Marker");
+            }
+            ImGui::EndTable();
+        }
+    } else if (gLowerTab == 2) {
+        // Undo History panel (after panels/history.rs)
+        ImGui::BeginDisabled(!hist.canUndo());
+        if (ImGui::SmallButton("Undo")) undoDocument();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!hist.canRedo());
+        if (ImGui::SmallButton("Redo")) redoDocument();
+        ImGui::EndDisabled();
+        ImGui::Separator();
+        ImGui::TextColored(col4(C_TEXT), "Current State: %s (%zu tracks)", doc.name.c_str(), doc.tracks.size());
+        if (!sessionNote.empty()) {
+            ImGui::TextColored(col4(C_DIM), "Last action: %s", sessionNote.c_str());
+        }
+    }
     ImGui::EndChild();
 }
 
-static void drawEmptyCenter() {
-    ImGui::BeginChild("edit_empty", ImVec2(0, 0), true);
-    ImGui::TextDisabled("%s", T("Tracks and the timeline arrive in the next phases."));
-    ImGui::TextDisabled("%s", T("File > New to begin."));
-    ImGui::EndChild();
-}
+// ============================================================================
+// Preferences & About Dialogs
+// ============================================================================
 
 static void drawPrefs() {
     if (!showPrefs) return;
@@ -464,6 +764,10 @@ static void drawPrefs() {
                     applyAudioDevice();
                     savePrefs();
                 }
+                if (!audioNote.empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextWrapped("%s", audioNote.c_str());
+                }
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -495,107 +799,382 @@ void init(SDL_Window* win, const std::string& prefPath, const std::string& langu
     if (splash) splash(T("Ready"), 1.0f);
 }
 
-static void drawTransport() {
-    if (!hasDoc) return;
-    ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetIO().DisplaySize.y - 48));
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, 48));
-    ImGui::Begin("transport", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-    if (ImGui::Button(Playback::isPlaying() ? T("Stop") : T("Play"))) {
-        if (Playback::isPlaying()) Playback::stop();
-        else Playback::play();
+// ============================================================================
+// Full SoundCraft Menu Bar & Main Frame (after crates/ui-egui/src/menus.rs & edit_window.rs)
+// ============================================================================
+
+static void drawMainMenuBar() {
+    if (!ImGui::BeginMainMenuBar()) return;
+
+    // App brand menu ("Polyhymnia", like SoundCraft's bold app menu)
+    if (ImGui::BeginMenu("Polyhymnia")) {
+        if (ImGui::MenuItem(T("About Polyhymnia"))) showAbout = true;
+        ImGui::Separator();
+        if (ImGui::MenuItem(T("Preferences..."), "Ctrl+,")) showPrefs = true;
+        ImGui::Separator();
+        if (ImGui::MenuItem(T("Quit"), "Alt+F4")) quit = true;
+        ImGui::EndMenu();
     }
-    ImGui::SameLine();
-    if (ImGui::Button(T("Loop"))) Playback::toggleLoop();
-    ImGui::SameLine();
-    ImGui::Text("%s %lld  %s %s", T("Playhead"), (long long)Playback::playhead(), T("Loop"), Playback::loopEnabled() ? T("on") : T("off"));
-    ImGui::End();
+
+    if (ImGui::BeginMenu(T("File"))) {
+        if (ImGui::MenuItem(T("New Session..."), "Ctrl+N")) newDoc();
+        if (ImGui::MenuItem(T("Open Demo Session"), nullptr)) openDemoDoc();
+        if (ImGui::MenuItem(T("Save Session"), "Ctrl+S", false, hasDoc)) saveDoc();
+        ImGui::Separator();
+        if (ImGui::MenuItem(T("Import Audio..."), "Ctrl+Shift+I")) openImportAudioDialog();
+        if (ImGui::BeginMenu(T("Import"))) {
+            if (ImGui::MenuItem(T("Audio..."), "Ctrl+Shift+I")) openImportAudioDialog();
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem(T("Preferences..."))) showPrefs = true;
+        ImGui::Separator();
+        if (ImGui::MenuItem(T("Quit"), "Alt+F4")) quit = true;
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu(T("Edit"))) {
+        const auto run = [&](const char* label, const char* shortcut, auto fn) {
+            if (ImGui::MenuItem(label, shortcut, false, hasDoc)) {
+                if (!hasDoc) newDoc();
+                mutateDocument(label, [&](Session::Document& d) { fn(d); });
+            }
+        };
+        if (ImGui::MenuItem(T("Undo"), "Ctrl+Z", false, hasDoc && hist.canUndo())) undoDocument();
+        if (ImGui::MenuItem(T("Redo"), "Ctrl+Shift+Z", false, hasDoc && hist.canRedo())) redoDocument();
+        ImGui::Separator();
+        run("Cut", "Ctrl+X", Editor::cut);
+        if (ImGui::MenuItem(T("Copy"), "Ctrl+C", false, hasDoc)) Editor::copy(doc);
+        run("Paste", "Ctrl+V", [](Session::Document& d) { Editor::paste(d, Playback::playhead(), Editor::selection().trackId); });
+        run("Clear", "Del", [](Session::Document& d) {
+            EngCmd::Engine e;
+            e.doc = std::move(d);
+            e.execute("edit.clear", {});
+            d = std::move(e.doc);
+        });
+        run("Duplicate", "Ctrl+D", Editor::duplicateSelection);
+        ImGui::Separator();
+        run("Separate Clip at Selection", "Ctrl+E", [](Session::Document& d) { Editor::separateAtPlayhead(d, Playback::playhead()); });
+        run("Heal Separation", "Ctrl+H", Editor::healSeparation);
+        run("Consolidate Clip", "Alt+Shift+3", Editor::consolidateSelection);
+        ImGui::Separator();
+        if (ImGui::BeginMenu(T("Fades"))) {
+            if (ImGui::MenuItem(T("Create..."), "Ctrl+F", false, hasDoc)) Edit::openFadesDialog();
+            run("Fade to Start", "Alt+D", [](Session::Document& d) {
+                EngCmd::Engine e;
+                e.doc = std::move(d);
+                e.execute("edit.fade_to_start", {});
+                d = std::move(e.doc);
+            });
+            run("Fade to End", "Alt+G", [](Session::Document& d) {
+                EngCmd::Engine e;
+                e.doc = std::move(d);
+                e.execute("edit.fade_to_end", {});
+                d = std::move(e.doc);
+            });
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu(T("View"))) {
+        ImGui::MenuItem(T("Tracks & Groups List"), nullptr, &gShowLeftDock);
+        ImGui::MenuItem(T("Clips List"), nullptr, &gShowRightDock);
+        ImGui::Separator();
+        if (ImGui::MenuItem(T("MIDI Editor"), "Ctrl+=", gLowerTab == 0)) gLowerTab = (gLowerTab == 0) ? -1 : 0;
+        if (ImGui::MenuItem(T("Memory Locations"), nullptr, gLowerTab == 1)) gLowerTab = (gLowerTab == 1) ? -1 : 1;
+        if (ImGui::MenuItem(T("Undo History"), nullptr, gLowerTab == 2)) gLowerTab = (gLowerTab == 2) ? -1 : 2;
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu(T("Track"))) {
+        if (ImGui::MenuItem(T("New..."), "Ctrl+Shift+N")) openNewTracksDialog();
+        if (ImGui::MenuItem(T("Duplicate"), "Alt+Shift+D", false, hasDoc && !doc.tracks.empty())) {
+            const uint64_t tid = !doc.sessionEdit.selectedTracks.empty() ? doc.sessionEdit.selectedTracks.front() : doc.tracks.front().numId;
+            mutateDocument("Duplicate Track", [tid](Session::Document& d) {
+                EngCmd::Engine e;
+                e.doc = std::move(d);
+                EngCmd::Engine::Params p;
+                p.nums["track"] = (double)tid;
+                e.execute("track.duplicate", p);
+                d = std::move(e.doc);
+            });
+        }
+        if (ImGui::MenuItem(T("Group..."), "Ctrl+G", false, hasDoc)) {
+            mutateDocument("Create Group", [](Session::Document& d) {
+                Session::Group g;
+                g.numId = (uint64_t)(d.groups.size() + 1);
+                g.letter = (char)('a' + (d.groups.size() % 26));
+                g.name = "Group " + std::to_string(g.numId);
+                for (const auto& t : d.tracks) g.members.push_back(t.numId);
+                d.groups.push_back(std::move(g));
+            });
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu(T("Clip"))) {
+        if (ImGui::MenuItem(T("Mute/Unmute Clips"), "Ctrl+M", false, hasDoc)) {
+            mutateDocument("Toggle Clip Mute", [](Session::Document& d) {
+                EngCmd::Engine e;
+                e.doc = std::move(d);
+                e.execute("clip.mute_toggle", {});
+                d = std::move(e.doc);
+            });
+        }
+        if (ImGui::MenuItem(T("Lock/Unlock Clip"), nullptr, false, hasDoc)) {
+            mutateDocument("Toggle Clip Lock", [](Session::Document& d) {
+                EngCmd::Engine e;
+                e.doc = std::move(d);
+                e.execute("clip.lock_toggle", {});
+                d = std::move(e.doc);
+            });
+        }
+        if (ImGui::MenuItem(T("Spot..."), nullptr, false, hasDoc)) {
+            Edit::openSpotForScript(doc);
+        }
+        if (ImGui::MenuItem(T("Fades..."), "Ctrl+F", false, hasDoc)) {
+            Edit::openFadesDialog();
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu(T("Event"))) {
+        if (ImGui::MenuItem(T("Add Marker at Playhead"), "Enter", false, hasDoc)) {
+            mutateDocument("Add Marker", [](Session::Document& d) {
+                Session::Marker m;
+                m.number = (unsigned)(d.markers.size() + 1);
+                m.id = "m" + std::to_string(m.number);
+                m.name = "Marker " + std::to_string(m.number);
+                m.start = Playback::playhead();
+                d.markers.push_back(std::move(m));
+            });
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu(T("AudioSuite"))) {
+        const auto runSuite = [&](const char* label, const char* cmd, EngCmd::Engine::Params p = {}) {
+            if (ImGui::MenuItem(label, nullptr, false, hasDoc)) {
+                mutateDocument(label, [=](Session::Document& d) {
+                    EngCmd::Engine e;
+                    e.doc = std::move(d);
+                    e.execute(cmd, p);
+                    d = std::move(e.doc);
+                });
+            }
+        };
+        runSuite("Gain (+3 dB)", "audiosuite.gain", [] { EngCmd::Engine::Params p; p.nums["db"] = 3.0; return p; }());
+        runSuite("Normalize", "audiosuite.normalize");
+        runSuite("Reverse", "audiosuite.reverse");
+        runSuite("Invert Phase", "audiosuite.invert_phase");
+        runSuite("DC Offset Removal", "audiosuite.dc_offset");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu(T("Options"))) {
+        if (ImGui::MenuItem(T("Loop Playback"), "Ctrl+Shift+L", Playback::loopEnabled())) Playback::toggleLoop();
+        if (hasDoc) {
+            ImGui::MenuItem(T("Metronome Click"), "K", &doc.click);
+            ImGui::MenuItem(T("Count Off"), nullptr, &doc.countoff);
+            ImGui::Separator();
+            auto menuFlag = [&](const char* label, const char* key, const char* sc = nullptr, bool def = false) {
+                bool val = doc.sessionEdit.flags.count(key) ? doc.sessionEdit.flags[key] : def;
+                if (ImGui::MenuItem(label, sc, &val)) {
+                    doc.sessionEdit.flags[key] = val;
+                }
+            };
+            menuFlag(T("Tab to Transients"), "options.tab_to_transient");
+            menuFlag(T("Link Timeline and Edit Selection"), "options.link_timeline_edit", nullptr, true);
+            menuFlag(T("Link Track and Edit Selection"), "options.link_track_edit");
+            menuFlag(T("Insertion Follows Playback"), "options.insertion_follows_playback", "N");
+            menuFlag(T("Mirrored MIDI Editing"), "options.mirrored_midi");
+            ImGui::MenuItem(T("Automation Follows Edit"), nullptr, &doc.edit.automationFollowsEdit);
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu(T("Setup"))) {
+        if (ImGui::MenuItem(T("Audio Engine /Playback Device..."))) {
+            showPrefs = true;
+            prefsPage = 1;
+        }
+        if (ImGui::MenuItem(T("Preferences..."))) {
+            showPrefs = true;
+        }
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu(T("Window"))) {
+        ImGui::MenuItem(T("Edit"), "Ctrl+=", true);
+        if (ImGui::MenuItem(T("Memory Locations"), nullptr, gLowerTab == 1)) gLowerTab = (gLowerTab == 1) ? -1 : 1;
+        if (ImGui::MenuItem(T("Undo History"), nullptr, gLowerTab == 2)) gLowerTab = (gLowerTab == 2) ? -1 : 2;
+        ImGui::Separator();
+        if (ImGui::MenuItem(T("About Polyhymnia"))) showAbout = true;
+        ImGui::EndMenu();
+    }
+
+    // Right-aligned "<Session Name> — Edit" label on menu bar (after menus.rs)
+    if (hasDoc) {
+        const std::string rightTitle = doc.name + " \xe2\x80\x94 Edit";
+        const float tw = ImGui::CalcTextSize(rightTitle.c_str()).x;
+        const float rx = ImGui::GetWindowWidth() - tw - 14.0f;
+        if (rx > ImGui::GetCursorPosX() + 16.0f) {
+            ImGui::SameLine(rx);
+            ImGui::TextColored(col4(C_DIM), "%s", rightTitle.c_str());
+        }
+    }
+
+    ImGui::EndMainMenuBar();
 }
 
 void frame() {
-    if (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_I)) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_I)) {
         openImportAudioDialog();
     }
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_N)) {
+        openNewTracksDialog();
+    }
     if (hasDoc) {
-        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-            if (ImGui::GetIO().KeyShift)
-                redoDocument();
-            else
-                undoDocument();
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
+            if (io.KeyShift) redoDocument();
+            else undoDocument();
+        }
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F)) {
+            Edit::openFadesDialog();
         }
         Playback::setDocument(&doc);
         const auto plan = Mix::currentPlan();
         if (plan && !plan->missingNote.empty() && sessionNote.empty()) sessionNote = plan->missingNote;
     }
-    if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu(T("File"))) {
-            if (ImGui::MenuItem(T("New"), "Ctrl+N")) newDoc();
-            if (ImGui::MenuItem(T("Open demo"), nullptr)) openDemoDoc();
-            if (ImGui::MenuItem(T("Save"), "Ctrl+S", false, hasDoc)) saveDoc();
-            ImGui::Separator();
-            if (ImGui::MenuItem(T("Import Audio..."), "Ctrl+Shift+I")) openImportAudioDialog();
-            if (ImGui::BeginMenu(T("Import"))) {
-                if (ImGui::MenuItem(T("Audio..."), "Ctrl+Shift+I")) openImportAudioDialog();
-                ImGui::EndMenu();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem(T("Preferences..."))) showPrefs = true;
-            ImGui::Separator();
-            if (ImGui::MenuItem(T("Quit"), "Alt+F4")) quit = true;
-            ImGui::EndMenu();
-        }
-        if (hasDoc && ImGui::BeginMenu(T("Edit"))) {
-            const auto run = [&](const char* label, auto fn) {
-                if (ImGui::MenuItem(label)) mutateDocument(label, [&](Session::Document& d) { fn(d); });
-            };
-            if (ImGui::MenuItem(T("Undo"), "Ctrl+Z", false, hist.canUndo())) undoDocument();
-            if (ImGui::MenuItem(T("Redo"), "Ctrl+Shift+Z", false, hist.canRedo())) redoDocument();
-            ImGui::Separator();
-            run("Cut", Editor::cut);
-            if (ImGui::MenuItem(T("Copy"))) Editor::copy(doc);
-            run("Paste", [](Session::Document& d) { Editor::paste(d, Playback::playhead(), Editor::selection().trackId); });
-            run("Duplicate", Editor::duplicateSelection);
-            ImGui::Separator();
-            run("Separate", [](Session::Document& d) { Editor::separateAtPlayhead(d, Playback::playhead()); });
-            run("Heal", Editor::healSeparation);
-            run("Consolidate", Editor::consolidateSelection);
-            if (ImGui::MenuItem("Nudge +")) mutateDocument("Nudge", [](Session::Document& d) { Editor::nudgeSelection(d, Editor::gridStepSamples(d) / 4); });
-            if (ImGui::MenuItem("Nudge -")) mutateDocument("Nudge", [](Session::Document& d) { Editor::nudgeSelection(d, -Editor::gridStepSamples(d) / 4); });
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu(T("Help"))) {
-            if (ImGui::MenuItem(T("About Polyhymnia"))) showAbout = true;
-            ImGui::EndMenu();
-        }
-        ImGui::EndMainMenuBar();
-    }
-    const float transportH = hasDoc ? 48.0f : 0.0f;
-    const float chromeH = ImGui::GetFrameHeight() + transportH;
-    ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetFrameHeight()));
-    ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - chromeH));
-    ImGui::Begin("workspace", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-    drawLeftPanel();
-    ImGui::SameLine();
+
+    drawMainMenuBar();
+
+    const float menuH = ImGui::GetFrameHeight();
+    const float statusBarH = 24.0f;
+    const float winW = io.DisplaySize.x;
+    const float winH = io.DisplaySize.y - menuH - statusBarH;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowPos(ImVec2(0, menuH));
+    ImGui::SetNextWindowSize(ImVec2(winW, winH));
+    ImGui::Begin("workspace", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
     if (hasDoc) {
-        const float clipsPanelW = 240.0f;
-        const float centerW = std::max(120.0f, ImGui::GetContentRegionAvail().x - clipsPanelW - 8.0f);
-        ImGui::BeginChild("edit_main", ImVec2(centerW, 0), false);
-        Edit::drawToolbar();
-        Edit::draw(doc, 44.0f);
+        // 1. Top Toolbar across full width
+        Edit::drawToolbar(doc);
+
+        // 2. Main middle region (Left Dock | Timeline | Right Dock) + Bottom Dock
+        const float lowerPanelTotalH = (gLowerTab >= 0) ? gLowerDockH : 0.0f;
+        const float midH = std::max(80.0f, ImGui::GetContentRegionAvail().y - lowerPanelTotalH);
+
+        ImGui::BeginChild("edit_middle_row", ImVec2(0, midH), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        const float leftW = gShowLeftDock ? gLeftDockW : 0.0f;
+        const float rightW = gShowRightDock ? gRightDockW : 0.0f;
+        const float centerW = std::max(160.0f, winW - leftW - rightW);
+
+        if (gShowLeftDock) {
+            drawLeftTracksAndGroupsDock(leftW);
+            ImGui::SameLine(0.0f, 0.0f);
+        }
+
+        ImGui::BeginChild("edit_center_col", ImVec2(centerW, 0), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        Edit::draw(doc, 0.0f);
         ImGui::EndChild();
-        ImGui::SameLine();
-        ClipsPanel::draw(doc, 0.0f);
-    } else
-        drawEmptyCenter();
+
+        if (gShowRightDock) {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 6.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 5.0f));
+            ClipsPanel::draw(doc, rightW);
+            ImGui::PopStyleVar(2);
+        }
+        ImGui::EndChild();
+
+        // 3. Lower Dock Content (when a bottom tab is active)
+        if (gLowerTab >= 0) {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 5.0f));
+            drawBottomDockContent(lowerPanelTotalH);
+            ImGui::PopStyleVar(2);
+        }
+    } else {
+        // Empty workspace prompt with quick buttons
+        ImGui::SetCursorPos(ImVec2(28.0f, 28.0f));
+        ImGui::BeginGroup();
+        ImGui::TextColored(col4(C_TEXT), "%s", T("No project open yet."));
+        ImGui::Spacing();
+        ImGui::TextDisabled("%s", T("File > New Session, File > Open Demo Session, or File > Import Audio (Ctrl+Shift+I) to begin."));
+        ImGui::Spacing();
+        if (ImGui::Button(T("Open Midnight Groove Demo"), ImVec2(220, 28))) openDemoDoc();
+        ImGui::SameLine(0.0f, 8.0f);
+        if (ImGui::Button(T("New Blank Session"), ImVec2(180, 28))) newDoc();
+        ImGui::SameLine(0.0f, 8.0f);
+        if (ImGui::Button(T("Import Audio..."), ImVec2(160, 28))) openImportAudioDialog();
+        ImGui::EndGroup();
+    }
+
     ImGui::End();
+    ImGui::PopStyleVar(2);
+
+    // Bottom Status & Tab Bar (MIDI EDITOR, MEMORY LOCATIONS, UNDO HISTORY + right status text)
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 3.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 2.0f));
+    ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - statusBarH));
+    ImGui::SetNextWindowSize(ImVec2(winW, statusBarH));
+    ImGui::Begin("sc_status_bar", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
+    ImDrawList* sdl = ImGui::GetWindowDrawList();
+    sdl->AddLine(ImVec2(0, io.DisplaySize.y - statusBarH), ImVec2(winW, io.DisplaySize.y - statusBarH), C_BORDER);
+
+    auto tabBtn = [&](const char* label, int idx) {
+        const bool active = (gLowerTab == idx);
+        if (active) ImGui::PushStyleColor(ImGuiCol_Button, col4(C_BLUE));
+        if (ImGui::SmallButton(label)) {
+            gLowerTab = active ? -1 : idx;
+        }
+        if (active) ImGui::PopStyleColor();
+        ImGui::SameLine();
+    };
+    tabBtn("MIDI EDITOR", 0);
+    tabBtn("MEMORY LOCATIONS", 1);
+    tabBtn("UNDO HISTORY", 2);
+
+    if (!sessionNote.empty()) {
+        ImGui::SameLine(0.0f, 12.0f);
+        ImGui::TextColored(col4(C_DIM), "%s", sessionNote.c_str());
+    }
+
+    if (hasDoc) {
+        char rightStat[256];
+        std::snprintf(rightStat, sizeof(rightStat), "%s \xc2\xb7 %.0f Hz \xc2\xb7 %d-bit \xc2\xb7 %zu tracks",
+                      doc.name.c_str(), doc.sampleRate, doc.bitDepth, doc.tracks.size());
+        const float rw = ImGui::CalcTextSize(rightStat).x;
+        const float rx = winW - rw - 12.0f;
+        if (rx > ImGui::GetCursorPosX() + 12.0f) {
+            ImGui::SameLine(rx);
+            ImGui::TextColored(col4(C_DIM), "%s", rightStat);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+
+    // Floating dialogs & modals
     drawPrefs();
     drawAbout();
     drawImportAudioDialog();
+    drawNewTracksDialog();
     if (hasDoc) {
+        Edit::drawModals(doc);
         Spot::draw(doc);
         ClipsPanel::drawDialogs(doc);
     }
     gImports.show();
-    drawTransport();
 }
 
 void script(const std::string& name) {
@@ -664,18 +1243,25 @@ void script(const std::string& name) {
         return;
     }
     if (name == "edit") {
-        doc = Session::demo();
+        doc = Session::midnightGrooveDemo();
         doc.folder = prefDir;
-        std::string err;
-        const std::string adir = prefDir + "audio";
-        std::filesystem::create_directories(adir);
-        const int rate = (int)doc.sampleRate;
-        Mix::writeTestToneWav(adir + "/sine_440.wav", 440.0, 2.0, rate, err);
-        Mix::writeTestToneWav(adir + "/click.wav", 2200.0, 0.08, rate, err);
         hasDoc = true;
+        hist.clear();
         Edit::scriptSetup(doc);
         Playback::setDocument(&doc);
-        fprintf(stderr, "edit: timeline %zu tracks, zoom ready\n", doc.tracks.size());
+        fprintf(stderr, "edit: Midnight Groove demo session, %zu tracks, %zu sources, %zu markers\n",
+                doc.tracks.size(), doc.sources.size(), doc.markers.size());
+        return;
+    }
+    if (name == "fades_test") {
+        doc = Session::midnightGrooveDemo();
+        doc.folder = prefDir;
+        hasDoc = true;
+        hist.clear();
+        Edit::scriptSetup(doc);
+        Edit::openFadesDialog();
+        Playback::setDocument(&doc);
+        fprintf(stderr, "fades_test: Fades dialog open on Midnight Groove (%zu tracks)\n", doc.tracks.size());
         return;
     }
     if (name == "import") {
@@ -729,14 +1315,10 @@ void script(const std::string& name) {
             f.write(reinterpret_cast<const char*>(b.data()), static_cast<std::streamsize>(b.size()));
         }
 
-        // 1. Import via File > Import Audio onto a new track at session start, copying into Audio Files/
         runImportPaths({wavPath}, 0, 0, true);
-        // 2. Drop AIFF file onto Track 1 at 1.75s (84000 samples)
         const uint64_t track1Num = doc.tracks.empty() ? 0 : doc.tracks[0].numId;
         runImportPaths({aiffPath}, 1, 0, true, track1Num, 84000);
-        // 3. Drop FLAC file onto empty timeline space (new track) at 0.5s (24000 samples)
         runImportPaths({flacPath}, 0, 0, true, std::nullopt, 24000);
-        // 4. Drop WAV file onto the Clips list on the right (whole-file source only)
         runImportPaths({clipListPath}, 2, 0, true);
 
         Edit::scriptSetup(doc);
@@ -781,4 +1363,4 @@ bool redoDocument() {
     return true;
 }
 
-}
+} // namespace App

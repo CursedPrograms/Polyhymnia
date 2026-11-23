@@ -6,7 +6,9 @@
 #include "editor.h"
 #include "icons.h"
 #include "lang.h"
+#include "octavia.h"
 #include "playback.h"
+#include "vst3_host.h"
 
 #include <imgui.h>
 
@@ -72,7 +74,14 @@ void syncInsertsSummary(Session::Track& track) {
     for (const auto& slot : track.mixer.inserts) {
         if (!slot.has_value()) continue;
         const Dsp::PluginInfo* inf = Dsp::pluginInfo(slot->plugin);
-        const std::string sn = inf ? inf->shortName : slot->plugin;
+        std::string sn;
+        if (inf) {
+            sn = inf->shortName;
+        } else if (const auto* vd = Vst3Host::findDescriptor(slot->plugin)) {
+            sn = vd->name.size() > 8 ? vd->name.substr(0, 8) : vd->name;
+        } else {
+            sn = slot->plugin;
+        }
         if (!sum.empty()) sum += " \xc2\xb7 ";
         sum += sn;
     }
@@ -320,6 +329,8 @@ void drawInsertMenuPopup(Session::Document& doc, Session::Track& track, size_t s
         Dsp::Category::Delay, Dsp::Category::Modulation, Dsp::Category::Harmonic, Dsp::Category::Dither,
         Dsp::Category::Other,
     };
+    const auto allVst3 = Vst3Host::scan();
+
     for (Dsp::Category cat : kCats) {
         if (ImGui::BeginMenu(Dsp::categoryLabel(cat))) {
             for (const Dsp::PluginInfo* p : Dsp::plugins()) {
@@ -333,8 +344,50 @@ void drawInsertMenuPopup(Session::Document& doc, Session::Track& track, size_t s
                     }
                 }
             }
+            for (const auto& d : allVst3) {
+                if (d.category == cat && !d.isInstrument) {
+                    const bool isCur = occupied && track.mixer.inserts[slot]->plugin == d.id;
+                    if (ImGui::MenuItem(d.name.c_str(), d.vendor.c_str(), isCur)) {
+                        track.mixer.inserts[slot] = Session::Insert::make(d.id);
+                        syncInsertsSummary(track);
+                        openPluginWindow(track.numId, slot);
+                        ++doc.touch;
+                    }
+                }
+            }
             ImGui::EndMenu();
         }
+    }
+
+    bool hasOctavia = false;
+    for (const auto& d : allVst3) {
+        if (d.vendor == "Octavia" || d.name.find("Safety") != std::string::npos ||
+            d.name.find("Fuzz") != std::string::npos || d.name.find("stringtuner") != std::string::npos) {
+            hasOctavia = true;
+            break;
+        }
+    }
+    if (hasOctavia) {
+        if (ImGui::BeginMenu("Octavia")) {
+            for (const auto& d : allVst3) {
+                if (d.vendor == "Octavia" || d.name.find("Safety") != std::string::npos ||
+                    d.name.find("Fuzz") != std::string::npos || d.name.find("stringtuner") != std::string::npos) {
+                    const bool isCur = occupied && track.mixer.inserts[slot]->plugin == d.id;
+                    if (ImGui::MenuItem(d.name.c_str(), "Octavia", isCur)) {
+                        track.mixer.inserts[slot] = Session::Insert::make(d.id);
+                        syncInsertsSummary(track);
+                        openPluginWindow(track.numId, slot);
+                        ++doc.touch;
+                    }
+                }
+            }
+            ImGui::EndMenu();
+        }
+    }
+
+    ImGui::Separator();
+    if (ImGui::MenuItem("Get the Octavia plugins...")) {
+        Octavia::startInstallAsync();
     }
 }
 
@@ -938,12 +991,14 @@ void drawFloatingWindows(Session::Document& doc) {
             : (slot < Session::kInsertSlots && track->mixer.inserts[slot].has_value() ? &(*track->mixer.inserts[slot]) : nullptr);
         if (!ins) continue;
         const Dsp::PluginInfo* info = Dsp::pluginInfo(ins->plugin);
-        if (!info) continue;
+        const auto* vstDesc = Vst3Host::findDescriptor(ins->plugin);
+        if (!info && !vstDesc) continue;
 
+        const std::string plugName = info ? info->name : vstDesc->name;
         const std::string place = isInst ? "instrument" : std::string(1, static_cast<char>('a' + slot));
         char winTitle[256];
         std::snprintf(winTitle, sizeof(winTitle), "%s \xc2\xb7 %s \xc2\xb7 %s###plug_%llu_%zu",
-                      track->name.c_str(), place.c_str(), info->name,
+                      track->name.c_str(), place.c_str(), plugName.c_str(),
                       static_cast<unsigned long long>(tid), slot);
 
         bool open = true;
@@ -968,55 +1023,65 @@ void drawFloatingWindows(Session::Document& doc) {
                 }
             }
 
-            if ( std::strcmp(info->id, "eq_7band") == 0 || std::strcmp(info->id, "eq_1band") == 0) {
+            if (vstDesc) {
+                ImGui::Text("Vendor: %s", vstDesc->vendor.c_str());
+                ImGui::Text("Category: %s", Dsp::categoryLabel(vstDesc->category));
                 ImGui::Spacing();
-                const ImVec2 cMin = ImGui::GetCursorScreenPos();
-                const ImVec2 cSz(350.0f, 96.0f);
-                drawEqCurveBox(ImGui::GetWindowDrawList(), cMin, ImVec2(cMin.x + cSz.x, cMin.y + cSz.y), info->id, ins->params, 140);
-                ImGui::Dummy(cSz);
-                ImGui::Spacing();
-            }
-
-            if (ImGui::BeginTable("plug_params_grid", 3, ImGuiTableFlags_SizingFixedFit)) {
-                ImGui::TableSetupColumn("Param", ImGuiTableColumnFlags_WidthFixed, 92.0f);
-                ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, 168.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 82.0f);
-
-                for (size_t pi = 0; pi < info->params.size(); ++pi) {
-                    const auto& p = info->params[pi];
-                    ImGui::PushID(static_cast<int>(pi));
-                    ImGui::TableNextRow();
-
-                    const float curVal = ins->params.count(p.id) ? ins->params.at(p.id) : p.defaultVal;
-                    float x = curVal;
-
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(p.name);
-
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::SetNextItemWidth(162.0f);
-                    if (!p.choices.empty()) {
-                        int idx = std::clamp(static_cast<int>(std::llround(x)), 0, static_cast<int>(p.choices.size()) - 1);
-                        if (ImGui::Combo("##choice", &idx, p.choices.data(), static_cast<int>(p.choices.size()))) {
-                            x = static_cast<float>(idx);
-                        }
-                    } else {
-                        const ImGuiSliderFlags flags = (p.taper == Dsp::Taper::Log && p.minVal > 0.0f) ? ImGuiSliderFlags_Logarithmic : ImGuiSliderFlags_None;
-                        ImGui::SliderFloat("##slider", &x, p.minVal, p.maxVal, "", flags);
-                    }
-
-                    if (std::abs(x - curVal) > 1e-5f) {
-                        ins->params[p.id] = p.clamp(x);
-                        ++doc.touch;
-                    }
-
-                    ImGui::TableSetColumnIndex(2);
-                    const std::string valStr = p.format(ins->params.count(p.id) ? ins->params.at(p.id) : p.defaultVal);
-                    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(C_DIM), "%s", valStr.c_str());
-
-                    ImGui::PopID();
+                ImGui::TextDisabled("Hosted VST3 Plugin");
+            } else if (info) {
+                if (std::strcmp(info->id, "eq_7band") == 0 || std::strcmp(info->id, "eq_1band") == 0) {
+                    ImGui::Spacing();
+                    const ImVec2 cMin = ImGui::GetCursorScreenPos();
+                    const ImVec2 cSz(350.0f, 96.0f);
+                    drawEqCurveBox(ImGui::GetWindowDrawList(), cMin, ImVec2(cMin.x + cSz.x, cMin.y + cSz.y), info->id, ins->params, 140);
+                    ImGui::Dummy(cSz);
+                    ImGui::Spacing();
                 }
-                ImGui::EndTable();
+
+                if (ImGui::BeginTable("plug_params_grid", 3, ImGuiTableFlags_SizingFixedFit)) {
+                    ImGui::TableSetupColumn("Param", ImGuiTableColumnFlags_WidthFixed, 92.0f);
+                    ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, 168.0f);
+                    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed, 82.0f);
+
+                    for (size_t pi = 0; pi < info->params.size(); ++pi) {
+                        const auto& p = info->params[pi];
+                        ImGui::PushID(static_cast<int>(pi));
+                        ImGui::TableNextRow();
+
+                        const float curVal = ins->params.count(p.id) ? ins->params.at(p.id) : p.defaultVal;
+                        float x = curVal;
+
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted(p.name);
+
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::SetNextItemWidth(162.0f);
+                        if (!p.choices.empty()) {
+                            int idx = std::clamp(static_cast<int>(std::llround(x)), 0, static_cast<int>(p.choices.size()) - 1);
+                            if (ImGui::Combo("##choice", &idx, p.choices.data(), static_cast<int>(p.choices.size()))) {
+                                x = static_cast<float>(idx);
+                            }
+                        } else if (p.unit == Dsp::Unit::Toggle) {
+                            bool b = (x >= 0.5f);
+                            if (ImGui::Checkbox("##toggle", &b)) x = b ? 1.0f : 0.0f;
+                        } else {
+                            const ImGuiSliderFlags flags = (p.taper == Dsp::Taper::Log && p.minVal > 0.0f) ? ImGuiSliderFlags_Logarithmic : ImGuiSliderFlags_None;
+                            ImGui::SliderFloat("##slider", &x, p.minVal, p.maxVal, "", flags);
+                        }
+
+                        if (std::abs(x - curVal) > 1e-5f) {
+                            ins->params[p.id] = p.clamp(x);
+                            ++doc.touch;
+                        }
+
+                        ImGui::TableSetColumnIndex(2);
+                        const std::string valStr = p.format(ins->params.count(p.id) ? ins->params.at(p.id) : p.defaultVal);
+                        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(C_DIM), "%s", valStr.c_str());
+
+                        ImGui::PopID();
+                    }
+                    ImGui::EndTable();
+                }
             }
         }
         ImGui::End();

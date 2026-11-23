@@ -19,6 +19,8 @@
 #include "spot_dialog.h"
 #include "time_format.h"
 #include "undo.h"
+#include "vst3_host.h"
+#include "octavia.h"
 
 #include <imgui.h>
 
@@ -793,6 +795,40 @@ static void drawPrefs() {
                 if (!audioNote.empty()) {
                     ImGui::Spacing();
                     ImGui::TextWrapped("%s", audioNote.c_str());
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(T("Plugins"))) {
+                prefsPage = 2;
+                ImGui::Text("%s", T("VST3 Plugin Search Locations:"));
+                for (const auto& p : Vst3Host::defaultSearchPaths()) {
+                    ImGui::BulletText("%s", p.string().c_str());
+                }
+                for (const auto& p : Vst3Host::extraPaths()) {
+                    ImGui::BulletText("%s (user)", p.string().c_str());
+                }
+                ImGui::Spacing();
+                if (ImGui::Button(T("Scan / Rescan Plugins"))) {
+                    Vst3Host::rescan();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Get the Octavia plugins")) {
+                    Octavia::startInstallAsync();
+                }
+                if (Octavia::currentStatus() != Octavia::Status::Idle) {
+                    ImGui::Text("%s (%.0f%%)", Octavia::statusMessage().c_str(), Octavia::currentProgress() * 100.0f);
+                }
+                ImGui::Separator();
+                auto list = Vst3Host::scan();
+                ImGui::Text("Installed VST3 Plugins (%zu):", list.size());
+                if (ImGui::BeginChild("vst3_list", ImVec2(0, 180), true)) {
+                    for (const auto& d : list) {
+                        ImGui::Text("%s \xc2\xb7 %s \xc2\xb7 %s", d.name.c_str(), d.vendor.c_str(), Dsp::categoryLabel(d.category));
+                    }
+                    if (list.empty()) {
+                        ImGui::TextDisabled("No VST3 plugins found in standard folders.");
+                    }
+                    ImGui::EndChild();
                 }
                 ImGui::EndTabItem();
             }

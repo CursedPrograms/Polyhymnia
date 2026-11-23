@@ -40,6 +40,7 @@ tracks, clips and waveforms, a Mix window with channel strips and built-in effec
 | **Edit window** | SoundCraft's layout and icons: the toolbar (Shuffle / Spot / Slip / Grid, the edit tools, counter, Grid and Nudge, transport, tempo and meter), Tracks and Groups lists, the Clips list, Bars\|Beats, Min:Secs, Tempo, Meter and Markers rulers, track headers (record, input, solo, mute, view, automation, volume, pan), coloured clips with waveforms and MIDI notes |
 | **Editing** | Shuffle, Slip, Spot and Grid; cut, copy, paste, clear, duplicate, separate, heal, consolidate, nudge; fades in five shapes and crossfades; clip gain; undo and redo |
 | **Mix window** | A channel strip per track: inserts, sends, I/O routing, automation mode, pan, input, record, solo, mute, fader and meters; busses and the master |
+| **Plugins** | VST3 effects in the inserts (scanned from the standard VST3 folders, in the insert menu by category, each with its own window), and Get the Octavia plugins... from the insert menu |
 | **Built-in effects** | EQ 7-band, compressor, chorus, reverb (plate), limiter and more, each setting a slider |
 | **Recording** | Arm tracks, input monitoring, takes written as WAV, punch and loop recording |
 | **Bounce and export** | Mixdown to WAV, FLAC or MP3; stems and clips as files |
